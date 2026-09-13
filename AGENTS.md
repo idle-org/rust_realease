@@ -1,5 +1,16 @@
 # AGENT.md
 
+## User-authorized extensions
+
+The current user has expanded the original PoC scope:
+
+- Workspaces are supported through explicit `--package NAME` selection. Each run still releases exactly one package with one binary; ambiguous selection remains an error.
+- `--prepare-repo` may repair known release inputs (selected Cargo metadata, missing lockfile, ignores, Cross.toml). It exits before building/publishing and retains remote checkouts.
+- Only explicit `--commit-preparation`, `--create-tag`, and `--push-preparation` flags authorize the corresponding Git writes. Ordinary publishing and `--fix-metadata` never implicitly commit, tag, or push. Preparation never moves existing tags or force-pushes.
+- Release builds use fresh target subdirectories to avoid cached Git-version metadata. Preserve the existing default asset-collision policy; replacement requires `--replace-assets`.
+
+These extensions supersede the original workspace and Git-automation non-goals below while preserving their safe defaults. Preparation logic belongs in `worker/prepare.py`; Git transport belongs in `worker/project.py`.
+
 ## Mission
 
 Finish the `rust-binstall-publisher` proof-of-concept as a small, maintainable release tool for Rust CLI projects.

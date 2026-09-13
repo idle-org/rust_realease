@@ -1,700 +1,795 @@
 # AGENT_TASKS.md
 
-## Repository preparation and corrected assets (2026-09-13)
-
-- Corrected efo v0.1.0 assets and SHA256SUMS were explicitly authorized for replacement, replaced successfully, and reverified via anonymous downloads and real cargo-binstall installation for all three targets. These assets embed the tagged e9cf45c revision.
-- Fixed a live-discovered API bug: Gitea's release-assets endpoint returns all attachments without pagination. The former pagination loop repeated the same nonempty list indefinitely; the client now reads it once, with collision/replacement regression coverage.
-- Added `--prepare-repo`, `--commit-preparation`, `--create-tag`, `--push-preparation`, `--cross-image-tag`, and `--tag-prefix`.
-- Preparation previews diffs, repairs known release inputs, generates missing lockfiles, forwards the selected toolchain through Cross.toml, and can explicitly commit/tag/push. It refuses dirty commit inputs, existing-tag moves, mismatched push destinations, and implicit Git writes. Remote preparation checkouts are retained.
-- All real release builds now use fresh target subdirectories, eliminating reused build-script Git revision data.
-- 43 unit/mocked tests passed; the two opt-in cargo-binstall tests had already passed, and live replacement reverified all three installations.
-- The new prepare mode was also tested on epoch_forge's original 13eb69c source in a disposable checkout. It created signed local commit ec46455 and a local v0.1.0 tag, then all three locked cross-builds passed with the original build scripts, no manual environment overrides, and a clean Git worktree. The native --version embeds ec46455 correctly. This separate validation checkout was not pushed or published.
-
-## epoch_forge live publication (2026-09-13)
-
-After the user updated permissions, the atomic push succeeded: main and v0.1.0 now reference fix commit e9cf45ca7a52dda4b794b0a55764e6515255b625. The publisher created the live v0.1.0 release, uploaded all three archives plus SHA256SUMS, verified anonymous downloads/checksums/layouts, and successfully installed all three targets with cargo-binstall into temporary directories.
-
-A final native --version check found cached build-script output embedded the previous commit ID (13eb69c). A fresh target-directory rebuild now reports e9cf45c and all corrected local archives pass checksum/layout validation. Corrected assets are staged at `/tmp/binstall-publisher-epoch-forge/dist/release-ls5v7la8`, using target directory `/tmp/binstall-epoch-tagged-target`. Replacing the four published assets awaits explicit authorization under the asset-collision policy. No tag move or version bump is needed.
-
-## epoch_forge release-fix push attempt (2026-09-13)
-
-The user explicitly authorized fixes, commits, pushes and necessary tag changes.
-
-- Fixed both build scripts to use rustc when RUSTUP_TOOLCHAIN is absent, avoiding a rustup requirement inside cross images.
-- Added the tested Cross.toml image matrix, retained the already-tracked Cargo.lock, ignored dist output, added binstall metadata, and documented release/install commands.
-- Locked check/test and all three cross builds passed without temporary toolchain/image environment overrides.
-- Created signed commit `e9cf45ca7a52dda4b794b0a55764e6515255b625` and annotated local tag `v0.1.0` in `/tmp/binstall-publisher-epoch-forge`.
-- Attempted an atomic push of main and v0.1.0 with the supplied token. Gitea rejected both refs with `User permission denied for writing`. No remote branch or tag changes occurred, and no release was published.
-- Retained a portable patch at `/tmp/epoch-forge-release-fix.patch`. Continuing requires credentials whose account has repository code-write permission (and Releases write permission for publication).
-
-## epoch_forge integration (2026-09-13)
-
-- Selected workspace package `efo`, version `0.1.0`, at commit `13eb69cd2b49ed44543386bdc936aff31b8c6e3d`.
-- Cargo check/test commands succeeded (the selected package's test run discovered zero tests).
-- The initial cross build failed because both build scripts invoke `rustup` when `RUSTUP_TOOLCHAIN` is absent. Retrying with `RUSTUP_TOOLCHAIN=nightly` and `CROSS_CONTAINER_OPTS='--env RUSTUP_TOOLCHAIN=nightly'`, plus the documented `:main` image overrides, built all three default targets without source edits beyond binstall metadata.
-- Three archives and SHA256SUMS were produced in `/tmp/binstall-publisher-epoch-forge/dist/release-poo7ocro`; all checksums and layouts were verified. The native musl binary's `--version` command succeeded.
-- Read-only authenticated Gitea API requests succeeded. Repository permissions reported `pull: true`, `push: false`, `admin: false`; these code-access flags do not establish the account's separate Releases unit permission.
-- Publication remains blocked by the absence of matching tag `v0.1.0`. Existing tags `0.0.1a` and `fullnames` do not match the selected package version. The `v0.1.0` release is also absent. No remote changes were made.
-
-## Workspace selection extension (2026-09-13)
-
-User-authorized extension to the original single-package scope:
-
-- [x] Add `--package NAME` for exact workspace member selection; retain explicit errors for ambiguous, unknown, library-only, and multi-binary selections.
-- [x] Use Cargo's resolved inherited version and repository, workspace lockfile/profile/target directory, and selected member manifest.
-- [x] Scope Cargo check/test and cross build to the chosen package, with ordinary dependency compilation.
-- [x] Repair only the selected member's metadata and verify cargo-binstall against its manifest.
-- [x] Add workspace regression tests and real cargo-binstall coverage for inherited workspace versions on all three default targets.
-- [x] Confirm `ravenous-tools` inspection selects `crates/ravenous-tools/Cargo.toml`, version `0.3.34`.
-
-Validation: 33 unit/mocked tests and both opt-in cargo-binstall integration tests passed. The workspace integration fixture includes an unrelated member that deliberately fails compilation; selecting the CLI still passes Cargo check/test and all three binstall installations.
-
-Retried the user-authorized live workflow on existing tag `0.3.32` (commit `61206c7a88c6b2d461ddee35fe4d7e2968b97c45`) using `--package ravenous-tools`, an empty tag prefix, `--unlocked`, and the documented cross image overrides. Package inspection, member-only metadata repair, and host check/test completed. The first cross build reached linking and failed with `cannot find -lsqlite3`: the sample's unbundled SQLite dependency is unavailable for the musl target in the cross image. The retained checkout is `/tmp/binstall-publisher-fsd8p_ke/source`. The publisher never reached Gitea API calls; no remote changes were made. This sample still needs a target-compatible SQLite build setup before live publication can be verified.
-
-This supersedes the original rejection of all multi-package workspaces. Multi-package release orchestration and multi-binary packages remain out of scope.
-
-## Implementation status (2026-09-13)
-
-The implementation phases below are complete. Checkboxes describe implemented behavior; live release publication remains an integration gate, not an assumed success.
-
-Validation performed:
-
-- 26 standard-library unit/mocked tests passed, including all stop-stage boundaries, wrapper guards, metadata repair, source cleanup, tag checks, asset replacement, archive checks, and token redaction.
-- The opt-in real cargo-binstall integration test passed for all three default targets using a temporary loopback asset server and temporary install paths.
-- Cloned `https://proxy.dandaedre.com/gitea/idle-org/john_slop.git` at `a144f47452696ae8bbcc3eb04b357c399b4b12d7` into `/tmp/binstall-publisher-john-slop`.
-- Dry-run identified missing repository/binstall metadata, Cargo.lock, and the expected `v0.1.0` tag. Metadata repair was checked in the disposable clone and was idempotent.
-- Cargo check and all sample tests passed. All three real cross-builds passed with explicit `:main` cross image overrides after the installed cross 0.2.5 images failed with GLIBC incompatibilities. The required overrides are documented in README.
-- Three real archives and SHA256SUMS were produced in `/tmp/binstall-publisher-john-slop/dist/release-ksxg81rg`; their checksums and layouts were independently verified.
-- Shell syntax and `git diff --check` passed. No additional formatting/lint tooling was introduced.
-
-Still unverified against live Gitea: release creation/reuse, authenticated asset upload, and consumption of those live assets. The sample has no release tag and this environment has no GITEA_TOKEN. No live releases, tags, remote assets, commits, or pushes were made. The final integration checklist remains open for that reason.
-
----
-
 ## Goal
 
-Finish the `rust-binstall-publisher` proof-of-concept described in `AGENTS.md`.
+Migrate `rust_realease` from its current Python implementation to a native Rust CLI without regressing release behavior.
 
-Work in small, verifiable increments. Prefer completing one stage cleanly before adding the next.
+The Python implementation remains the behavioral oracle until the Rust replacement passes parity and end-to-end release validation.
+
+Work in small, testable phases. Commit migration work in coherent increments.
 
 ---
 
-## Phase 0 — Establish the project skeleton
+## Migration rules
 
-- [x] Create the final directory structure from `AGENTS.md`.
-- [x] Add `worker/__init__.py`.
-- [x] Add `worker/__main__.py`.
-- [x] Add `requirements.txt`.
-- [x] Add `config.toml`.
-- [x] Add or update `README.md`.
-- [x] Ensure the package launches through `python -m worker`.
+- [ ] Do not delete the Python implementation before Rust parity is proven.
+- [ ] Do not change release semantics merely to simplify the port.
+- [ ] Keep mutation operations opt-in.
+- [ ] Preserve artifact names/layouts and cargo-binstall metadata.
+- [ ] Preserve workspace `--package NAME` behavior.
+- [ ] Preserve repository preparation behavior.
+- [ ] Preserve fresh build target directories.
+- [ ] Preserve Gitea asset collision/replacement semantics.
+- [ ] Preserve token redaction and secret isolation.
+- [ ] Treat live release operations as opt-in integration tests.
+- [ ] Record intentional incompatibilities in this file and README.
 
-### Acceptance criteria
+---
+
+## Phase 0 — Freeze and characterize the Python behavior
+
+### Inventory
+
+- [ ] Record the current CLI flags and defaults from the Python implementation.
+- [ ] Record the config schema/defaults.
+- [ ] Record stage ordering and `--stop-after` behavior.
+- [ ] Record workspace/package-selection behavior.
+- [ ] Record preparation flag dependency rules.
+- [ ] Record artifact naming and archive layout.
+- [ ] Record Gitea release and asset-collision semantics.
+- [ ] Record verification behavior.
+- [ ] Record token handling and redaction rules.
+
+### Baseline test run
+
+- [ ] Run the existing Python unit/mocked test suite.
+- [ ] Run existing opt-in cargo-binstall tests where the environment permits.
+- [ ] Save representative dry-run outputs for fixtures.
+- [ ] Save representative metadata-repair diffs.
+- [ ] Save representative preparation diffs.
+- [ ] Save representative archive listings and SHA256SUMS.
+
+### Compatibility fixtures
+
+Create or preserve fixtures for:
+
+- [ ] standalone single-binary package;
+- [ ] workspace with an explicitly selected CLI package;
+- [ ] inherited workspace version/repository;
+- [ ] ambiguous workspace;
+- [ ] unknown package;
+- [ ] library-only package;
+- [ ] selected package with multiple binaries;
+- [ ] missing Cargo.lock;
+- [ ] missing binstall metadata;
+- [ ] conflicting binstall metadata;
+- [ ] custom/empty tag prefix;
+- [ ] existing release asset collision.
+
+### Gate
+
+- [ ] Existing behavior is sufficiently characterized that a Rust result can be compared against it.
+
+---
+
+## Phase 1 — Create the Rust application skeleton
+
+- [ ] Add `Cargo.toml`.
+- [ ] Add `Cargo.lock`.
+- [ ] Add `src/main.rs`.
+- [ ] Add modules:
+  - [ ] `cli.rs`
+  - [ ] `config.rs`
+  - [ ] `error.rs`
+  - [ ] `model.rs`
+  - [ ] `runner.rs`
+  - [ ] `project.rs`
+  - [ ] `manifest.rs`
+  - [ ] `prepare.rs`
+  - [ ] `build.rs`
+  - [ ] `package.rs`
+  - [ ] `gitea.rs`
+  - [ ] `verify.rs`
+- [ ] Add test fixture directory.
+- [ ] Add `cargo fmt --check` gate.
+- [ ] Add strict Clippy gate.
+- [ ] Add `cargo test --all` gate.
+
+Suggested dependencies:
+
+- [ ] `clap`
+- [ ] `serde`
+- [ ] `toml`
+- [ ] `toml_edit`
+- [ ] `thiserror`
+- [ ] `reqwest` with rustls
+- [ ] `url`
+- [ ] `tempfile`
+- [ ] `sha2`
+- [ ] `tar`
+- [ ] `flate2`
+
+Test-only as useful:
+
+- [ ] `assert_cmd`
+- [ ] `predicates`
+- [ ] mock HTTP server crate
+
+### Gate
+
+- [ ] Rust binary builds.
+- [ ] `--help` works.
+- [ ] No release behavior has been removed from Python yet.
+
+---
+
+## Phase 2 — Port models, config, and pure policy
+
+### Models
+
+- [ ] Define selected package model.
+- [ ] Define target/artifact model.
+- [ ] Define release destination model.
+- [ ] Define preparation plan model.
+- [ ] Define stage enum.
+- [ ] Define config model.
+
+### Configuration
+
+- [ ] Parse current `config.toml`.
+- [ ] Preserve defaults.
+- [ ] Implement CLI-over-config precedence.
+- [ ] Support custom config path.
+- [ ] Validate target/profile/package format settings.
+
+### Pure policy
+
+- [ ] Implement expected tag generation.
+- [ ] Implement empty/custom tag prefix.
+- [ ] Implement archive naming.
+- [ ] Implement archive root naming.
+- [ ] Implement target-specific binary filename.
+- [ ] Implement expected binstall metadata.
+- [ ] Implement release URL construction.
+- [ ] Implement stage ordering.
+
+### Tests
+
+- [ ] Port pure Python tests to Rust.
+- [ ] Add tests for non-`v` tags.
+- [ ] Add tests for Windows `.exe`.
+- [ ] Add tests for malformed config.
+- [ ] Add tests for CLI precedence.
+
+### Gate
+
+- [ ] Rust pure-policy outputs match Python for the fixture matrix.
+
+---
+
+## Phase 3 — Port command execution and redaction
+
+### Runner
+
+- [ ] Implement argv-based subprocess runner.
+- [ ] Support cwd.
+- [ ] Support env additions/removals.
+- [ ] Support captured output.
+- [ ] Support streaming where useful.
+- [ ] Add verbose diagnostics.
+- [ ] Add exit-code/error context.
+
+### Secret safety
+
+- [ ] Redact `GITEA_TOKEN`.
+- [ ] Redact configured token env variable.
+- [ ] Redact credentials in URLs.
+- [ ] Ensure child Cargo/Cross build processes do not inherit Gitea token.
+- [ ] Test error messages for token leakage.
+
+### Gate
+
+- [ ] All runner tests pass.
+- [ ] No shell-string execution is used for normal commands.
+
+---
+
+## Phase 4 — Port source acquisition and Git behavior
+
+### Local source
+
+- [ ] Accept local paths.
+- [ ] Resolve workspace root safely.
+- [ ] Never delete/move local source.
+- [ ] Read Git origin.
+- [ ] Inspect worktree cleanliness.
+- [ ] Resolve HEAD commit.
+
+### Remote source
+
+- [ ] Accept HTTP/HTTPS Git URLs.
+- [ ] Accept SSH URLs.
+- [ ] Accept SCP-style URLs.
+- [ ] Clone to temporary directory.
+- [ ] Checkout requested tag exactly.
+- [ ] Implement default cleanup.
+- [ ] Implement `--keep-workdir`.
+- [ ] Preserve preparation-mode retained checkout behavior.
+
+### Repository URL normalization
+
+- [ ] Normalize `.git` suffix.
+- [ ] Convert supported SSH/SCP repository identity to web/API identity safely.
+- [ ] Reject URLs with embedded HTTP credentials for release metadata.
+- [ ] Reject query strings where existing behavior does.
+- [ ] Support explicit `--repository-url`.
+
+### Tests
+
+- [ ] Port repository URL parsing tests.
+- [ ] Test temp cleanup.
+- [ ] Test keep-workdir.
+- [ ] Test local source remains untouched.
+- [ ] Test exact tag checkout.
+
+### Gate
+
+- [ ] Fixture acquisition behavior matches Python.
+
+---
+
+## Phase 5 — Port Cargo metadata and package selection
+
+### Metadata
+
+- [ ] Execute `cargo metadata --format-version=1 --no-deps`.
+- [ ] Parse package/workspace information.
+- [ ] Resolve workspace root.
+- [ ] Resolve selected member manifest.
+- [ ] Resolve target directory.
+- [ ] Resolve inherited package version.
+- [ ] Resolve inherited repository.
+
+### Selection
+
+- [ ] Standalone package works without `--package`.
+- [ ] Multi-member workspace requires exact package selection when ambiguous.
+- [ ] `--package NAME` selects exact package.
+- [ ] Unknown package fails clearly.
+- [ ] Library-only package fails clearly.
+- [ ] Multi-binary selected package fails clearly.
+- [ ] Exactly one binary is accepted.
+
+### Tests
+
+- [ ] Port all workspace regression tests.
+- [ ] Include unrelated failing workspace member fixture.
+- [ ] Ensure selecting the intended package does not build/check unrelated member unnecessarily.
+
+### Gate
+
+- [ ] Rust selection decisions match Python for all compatibility fixtures.
+
+---
+
+## Phase 6 — Port manifest validation and repair
+
+### Reading/editing
+
+- [ ] Read selected `Cargo.toml` with `toml_edit`.
+- [ ] Detect missing/incorrect `package.repository`.
+- [ ] Derive repository from Git origin where safe.
+- [ ] Validate `[package.metadata.binstall]`.
+- [ ] Detect unsupported/conflicting custom binstall options.
+
+### Repair
+
+- [ ] Implement proposed-change plan.
+- [ ] Implement `--fix-metadata`.
+- [ ] Preserve comments/formatting where practical.
+- [ ] Edit only selected package manifest.
+- [ ] Make repair idempotent.
+- [ ] Report every changed key.
+
+### Dry-run
+
+- [ ] Print proposed diff.
+- [ ] Never write.
+
+### Tests
+
+- [ ] Port metadata validation tests.
+- [ ] Port repair tests.
+- [ ] Add idempotency test.
+- [ ] Add workspace member-only edit test.
+- [ ] Add inherited workspace version/repository cases.
+
+### Gate
+
+- [ ] Generated metadata matches current release contract.
+- [ ] Python and Rust proposed repairs are equivalent for fixtures.
+
+---
+
+## Phase 7 — Port version/tag validation
+
+- [ ] Compute expected tag from selected package version.
+- [ ] Apply configured/CLI tag prefix.
+- [ ] Validate explicit `--tag`.
+- [ ] Validate local tag points to HEAD where required.
+- [ ] Validate remote tag exists and points to expected commit before publication.
+- [ ] Preserve preparation-mode distinction: intended tag naming without checking out an existing tag.
+- [ ] Never move an existing tag.
+- [ ] Never rewrite Cargo package version.
+
+### Tests
+
+- [ ] Matching tag.
+- [ ] Mismatched tag.
+- [ ] Empty prefix.
+- [ ] Existing tag at wrong commit.
+- [ ] Preparation with intended new tag.
+- [ ] Ordinary publication without matching tag.
+
+### Gate
+
+- [ ] Tag policy matches Python behavior.
+
+---
+
+## Phase 8 — Port repository preparation
+
+### Planning
+
+- [ ] Implement preparation plan/diff.
+- [ ] Repair selected Cargo metadata.
+- [ ] Add build/artifact ignore entries.
+- [ ] Add Cargo.lock inclusion rule as required.
+- [ ] Generate Cargo.lock when missing.
+- [ ] Preserve existing lockfile.
+- [ ] Edit/create `Cross.toml`.
+- [ ] Preserve unrelated Cross.toml settings.
+- [ ] Support `--cross-image-tag`.
+
+### Mutation boundaries
+
+- [ ] `--prepare-repo` alone never commits/tags/pushes.
+- [ ] `--commit-preparation` requires correct clean state.
+- [ ] Stage only files belonging to the preparation.
+- [ ] Preserve user's Git signing configuration.
+- [ ] `--create-tag` requires commit-preparation workflow as currently specified.
+- [ ] Create annotated release tag.
+- [ ] Existing correct tag is validated, not moved.
+- [ ] `--push-preparation` requires required predecessor flags.
+- [ ] Verify push destination matches release repository.
+- [ ] Push branch + tag atomically where current behavior expects it.
+- [ ] Never force push.
+
+### Dry-run
+
+- [ ] Show file diffs.
+- [ ] Show lockfile-generation intention.
+- [ ] Show Git commit/tag/push intention.
+- [ ] Perform none of them.
+
+### Tests
+
+- [ ] Clean preparation.
+- [ ] Dirty-worktree refusal.
+- [ ] Existing tag safety.
+- [ ] Destination mismatch refusal.
+- [ ] No implicit Git writes.
+- [ ] Cross.toml preservation.
+- [ ] Missing lockfile.
+- [ ] Existing lockfile.
+
+### Gate
+
+- [ ] Rust preparation behavior matches Python fixtures.
+- [ ] Disposable repo preparation produces a clean, reviewable result.
+
+---
+
+## Phase 9 — Port prerequisite checks
+
+- [ ] Detect `git`.
+- [ ] Detect `cargo`.
+- [ ] Detect `cross`.
+- [ ] Detect Docker.
+- [ ] Detect Podman.
+- [ ] Honor `CROSS_CONTAINER_ENGINE`.
+- [ ] Determine usable container backend.
+- [ ] Detect `cargo-binstall` when needed.
+- [ ] Report all missing prerequisites before cross build.
+- [ ] Dry-run performs only read-only checks.
+
+### Gate
+
+- [ ] Failure messages are concise and actionable.
+
+---
+
+## Phase 10 — Port check/test/build pipeline
+
+### Host validation
+
+- [ ] Run `cargo check` for selected package.
+- [ ] Run `cargo test` for selected package.
+- [ ] Respect `--skip-tests`.
+- [ ] Preserve selected workspace package scoping.
+
+### Cross build
+
+- [ ] Build default Linux x86_64 musl.
+- [ ] Build default Linux aarch64 musl.
+- [ ] Build default Windows GNU x86_64.
+- [ ] Respect repeatable `--target`.
+- [ ] Respect profile.
+- [ ] Respect locked/unlocked behavior.
+- [ ] Pass selected workspace package correctly.
+- [ ] Use fresh target subdirectory for every real release build.
+- [ ] Preserve cross image configuration behavior.
+- [ ] Do not pass Gitea token to build subprocesses.
+
+### Tests
+
+- [ ] Command-construction unit tests.
+- [ ] Fake-runner orchestration tests.
+- [ ] Real host Cargo fixture test.
+- [ ] Real Cross tests behind opt-in environment gate.
+
+### Gate
+
+- [ ] Default target matrix builds the known integration fixture in the supported environment.
+- [ ] Fresh target directory regression is covered.
+
+---
+
+## Phase 11 — Port packaging and checksums
+
+### Packaging
+
+- [ ] Locate built binary.
+- [ ] Apply target-specific executable filename.
+- [ ] Create standardized archive root.
+- [ ] Preserve Unix executable mode.
+- [ ] Create `.tgz`.
+- [ ] Exclude unrelated files.
+- [ ] Validate archive members against traversal paths.
+
+### Checksums
+
+- [ ] Compute SHA-256.
+- [ ] Generate deterministic `SHA256SUMS`.
+- [ ] Keep stable asset ordering.
+
+### Reproducibility
+
+- [ ] Normalize archive metadata where safe.
+- [ ] Document any intentional difference from Python archive bytes.
+- [ ] Keep naming/layout identical regardless.
+
+### Tests
+
+- [ ] Archive filename.
+- [ ] Archive root.
+- [ ] Unix binary mode.
+- [ ] Windows `.exe`.
+- [ ] SHA-256 generation.
+- [ ] SHA256SUMS content.
+- [ ] No extra files.
+- [ ] Traversal/path safety.
+
+### Gate
+
+- [ ] Python and Rust package contracts match for all three default targets.
+
+---
+
+## Phase 12 — Port Gitea API client
+
+### Client
+
+- [ ] Parse base instance/repository coordinates.
+- [ ] Load token only from configured environment variable.
+- [ ] Use HTTPS for authenticated publication.
+- [ ] Set useful user-agent.
+- [ ] Implement contextual API errors.
+
+### Releases
+
+- [ ] Get remote tag.
+- [ ] Get release by tag.
+- [ ] Create release.
+- [ ] Reuse existing release.
+- [ ] Preserve draft/prerelease fields.
+
+### Assets
+
+- [ ] List release assets once according to current Gitea API behavior.
+- [ ] Do not reintroduce the historical repeated pagination bug.
+- [ ] Upload assets.
+- [ ] Fail on duplicate filename by default.
+- [ ] Delete/replace only under `--replace-assets`.
+- [ ] Never touch unrelated assets.
+
+### Tests
+
+- [ ] Mock release absence -> create.
+- [ ] Mock existing release -> reuse.
+- [ ] Asset listing regression test.
+- [ ] Collision refusal.
+- [ ] Explicit replacement.
+- [ ] HTTP failure context.
+- [ ] Token redaction.
+
+### Gate
+
+- [ ] Mocked Gitea behavior matches Python.
+
+---
+
+## Phase 13 — Port verification
+
+### Artifact verification
+
+- [ ] Build expected asset URLs.
+- [ ] Download published archives.
+- [ ] Prefer anonymous downloads for public assets.
+- [ ] Validate SHA256SUMS.
+- [ ] Validate archive root.
+- [ ] Validate binary filename.
+- [ ] Validate Unix executable bit where meaningful.
+
+### cargo-binstall
+
+- [ ] Use selected package manifest.
+- [ ] Create temporary Cargo home/install root.
+- [ ] Install without touching user's normal Cargo bin.
+- [ ] Verify all default target contracts where supported.
+- [ ] Respect `--skip-binstall-test`.
+
+### Tests
+
+- [ ] Local/mock HTTP asset server integration.
+- [ ] Real cargo-binstall integration fixture.
+- [ ] Check all three default target artifact layouts.
+
+### Gate
+
+- [ ] Existing opt-in cargo-binstall integration test has a Rust equivalent and passes.
+
+---
+
+## Phase 14 — Port orchestration, stages, and dry-run
+
+### Pipeline
+
+- [ ] Recreate stage ordering.
+- [ ] Implement `--stop-after`.
+- [ ] Ensure each stage stops after successful completion.
+- [ ] Preserve preparation as a separate workflow from ordinary publication.
+
+### Dry-run
+
+Verify no mutation:
+
+- [ ] no file edits;
+- [ ] no lock generation;
+- [ ] no compile;
+- [ ] no commit;
+- [ ] no tag creation;
+- [ ] no push;
+- [ ] no release creation;
+- [ ] no asset upload;
+- [ ] no asset deletion.
+
+Verify useful reporting:
+
+- [ ] selected package;
+- [ ] version;
+- [ ] tag;
+- [ ] proposed metadata repair;
+- [ ] prerequisites;
+- [ ] target matrix;
+- [ ] artifact names;
+- [ ] destination;
+- [ ] planned preparation/Git operations.
+
+### Tests
+
+- [ ] Every stop boundary.
+- [ ] Dry-run mutation guards.
+- [ ] Error propagation.
+- [ ] Verbose/non-verbose behavior.
+
+### Gate
+
+- [ ] Pipeline tests match Python stage semantics.
+
+---
+
+## Phase 15 — Build a Python-vs-Rust parity harness
+
+Create a migration-only harness/script or test utility.
+
+For each non-mutating fixture:
+
+- [ ] run Python implementation;
+- [ ] run Rust implementation;
+- [ ] normalize nondeterministic temp paths;
+- [ ] compare success/failure;
+- [ ] compare selected package;
+- [ ] compare version/tag;
+- [ ] compare metadata findings;
+- [ ] compare planned targets;
+- [ ] compare artifact names;
+- [ ] compare release destination.
+
+For repair/preparation fixtures:
+
+- [ ] run each in separate disposable copies;
+- [ ] compare meaningful TOML values;
+- [ ] compare changed-file set;
+- [ ] compare generated lockfile presence;
+- [ ] compare Cross.toml semantics;
+- [ ] compare Git operations planned.
+
+For packaging:
+
+- [ ] compare asset names;
+- [ ] compare archive member paths;
+- [ ] compare binary names/modes;
+- [ ] compare checksum correctness.
+
+### Gate
+
+- [ ] No unexplained parity differences remain.
+
+---
+
+## Phase 16 — Real disposable repository validation
+
+Use a repository specifically safe for integration testing.
+
+### Preparation
+
+- [ ] Rust tool inspects it successfully.
+- [ ] Dry-run is correct.
+- [ ] Rust preparation succeeds.
+- [ ] Commit creation works when explicitly authorized.
+- [ ] Annotated tag creation works when explicitly authorized.
+- [ ] Atomic push works when explicitly authorized.
+
+### Build/package
+
+- [ ] Cargo check passes.
+- [ ] Cargo tests pass.
+- [ ] All default cross builds pass.
+- [ ] Archives are produced.
+- [ ] SHA256SUMS is correct.
+
+### Publication
+
+- [ ] Matching remote tag is validated.
+- [ ] Release is created or reused.
+- [ ] All assets upload.
+- [ ] Anonymous downloads work.
+- [ ] Checksums/layouts verify.
+- [ ] cargo-binstall installs from the live release into a temporary location.
+
+### Safety
+
+- [ ] No unrelated repo files modified.
+- [ ] No unrelated release assets touched.
+- [ ] No token appears in logs.
+- [ ] No force push.
+- [ ] No tag movement.
+
+### Gate
+
+- [ ] One complete real Rust-driven release succeeds end to end.
+
+---
+
+## Phase 17 — Cut over the entry point
+
+Only after the prior gates pass:
+
+- [ ] Make the Rust executable the documented/default tool.
+- [ ] If `release.sh` remains, make it a thin compatibility launcher only.
+- [ ] Remove venv checks from the active workflow.
+- [ ] Remove `requirements.txt` from required setup.
+- [ ] Remove Python package installation from README.
+- [ ] Update examples to invoke the Rust binary.
+- [ ] Update CI/Jenkins to build/test Rust.
+- [ ] Add release/install instructions for this tool itself if desired.
+
+### Gate
+
+- [ ] A clean machine with Rust/runtime prerequisites but no Python environment can use the tool.
+
+---
+
+## Phase 18 — Remove the Python implementation
+
+Do this last.
+
+- [ ] Confirm no README command references Python worker.
+- [ ] Confirm no CI job requires Python worker.
+- [ ] Confirm no fixture/test depends solely on Python code.
+- [ ] Preserve useful behavioral tests in Rust.
+- [ ] Delete `worker/`.
+- [ ] Delete Python-only test code.
+- [ ] Delete `requirements.txt`.
+- [ ] Simplify/remove obsolete venv `release.sh` logic.
+- [ ] Remove parity harness if it has no long-term value.
+- [ ] Keep migration rationale in Git history / docs as appropriate.
+
+### Gate
+
+- [ ] `git grep` finds no accidental active Python-runtime dependency.
+- [ ] Rust test suite still passes.
+
+---
+
+## Phase 19 — Final quality pass
+
+Run:
 
 ```bash
-source .venv/bin/activate
-python -m worker --help
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all
 ```
 
-works without traceback.
+Also run the opt-in integration matrix available in the environment.
+
+Check:
+
+- [ ] no normal-path `unwrap()`/`expect()` on external/user input;
+- [ ] no secret leaks;
+- [ ] no shell interpolation hazards;
+- [ ] archive path safety;
+- [ ] helpful errors;
+- [ ] README reflects reality;
+- [ ] `AGENTS.md` reflects final architecture;
+- [ ] obsolete migration notes are clearly historical rather than active instructions.
 
 ---
 
-## Phase 1 — Harden `release.sh`
+## Final definition of done
 
-- [x] Add `set -euo pipefail`.
-- [x] Resolve the script directory reliably.
-- [x] Detect whether `VIRTUAL_ENV` is set.
-- [x] If `.venv` exists but is not active, refuse and print:
-  ```bash
-  source .venv/bin/activate
-  ```
-- [x] If `.venv` does not exist and stdin is interactive, ask to create it.
-- [x] On approval:
-  - [x] run `python3 -m venv .venv`;
-  - [x] upgrade/install pip if desired;
-  - [x] install `requirements.txt`;
-  - [x] exit after setup.
-- [x] Do not pretend to activate the environment from the child shell.
-- [x] If another venv is active, warn and ask whether to continue.
-- [x] In non-interactive mode, fail instead of prompting.
-- [x] End with:
-  ```bash
-  exec python -m worker "$@"
-  ```
-
-### Acceptance criteria
-
-Test all four cases:
-
-1. no venv, no `.venv`;
-2. no venv, `.venv` exists;
-3. wrong venv active;
-4. project `.venv` active.
+- [ ] Native Rust CLI replaces Python worker.
+- [ ] No venv is required.
+- [ ] Existing supported flags/config semantics are preserved.
+- [ ] Workspace `--package` behavior is preserved.
+- [ ] Metadata validation/repair is preserved.
+- [ ] Preparation + explicit commit/tag/push is preserved.
+- [ ] Tag safety is preserved.
+- [ ] Fresh-target build behavior is preserved.
+- [ ] Default three-target cross build is preserved.
+- [ ] `.tgz` naming/layout is preserved.
+- [ ] SHA256SUMS is preserved.
+- [ ] Gitea release creation/reuse works.
+- [ ] Asset collision/refusal/replacement behavior is preserved.
+- [ ] Asset-list pagination regression remains fixed.
+- [ ] Anonymous artifact validation works.
+- [ ] Real isolated cargo-binstall verification works.
+- [ ] Token security/redaction passes.
+- [ ] Rust formatting, Clippy, unit, mocked, and integration tests pass.
+- [ ] At least one live disposable end-to-end Rust release has succeeded.
+- [ ] Python runtime/dependencies are removable with no feature regression.
 
 ---
 
-## Phase 2 — CLI and configuration
-
-- [x] Implement a Typer CLI without a redundant mandatory `release` subcommand.
-- [x] Add positional `SOURCE`.
-- [x] Add:
-  - [x] `--tag`
-  - [x] repeatable `--target`
-  - [x] `--dry-run`
-  - [x] `--fix-metadata`
-  - [x] `--skip-tests`
-  - [x] `--skip-binstall-test`
-  - [x] `--draft`
-  - [x] `--prerelease`
-  - [x] `--replace-assets`
-  - [x] `--keep-workdir`
-  - [x] `--verbose`
-  - [x] `--stop-after`
-- [x] Implement `config.py`.
-- [x] Parse `config.toml`.
-- [x] Merge CLI overrides over config defaults.
-- [x] Keep the default build target list in configuration or one centralized policy object.
-
-### Acceptance criteria
-
-```bash
-./release.sh --help
-```
-
-shows all supported options clearly.
-
----
-
-## Phase 3 — Command runner
-
-- [x] Implement a shared command runner.
-- [x] Do not use `shell=True`.
-- [x] Support:
-  - [x] captured output;
-  - [x] streamed output for long-running builds;
-  - [x] working directory;
-  - [x] custom environment overrides;
-  - [x] verbose command logging.
-- [x] Create a dedicated exception for command failures.
-- [x] Include useful stderr in errors.
-- [x] Hide Python tracebacks by default.
-
-### Acceptance criteria
-
-A deliberately failing command produces a concise readable error.
-
----
-
-## Phase 4 — Acquire project source
-
-- [x] Accept local paths.
-- [x] Accept HTTPS Git URLs.
-- [x] Accept SSH-style Git URLs.
-- [x] Clone remote repositories into a temporary directory.
-- [x] Support checking out `--tag`.
-- [x] Record:
-  - [x] source URL/path;
-  - [x] root path;
-  - [x] commit SHA;
-  - [x] selected tag.
-- [x] Respect `--keep-workdir`.
-- [x] Never delete a local source project.
-
-### Acceptance criteria
-
-Both work:
-
-```bash
-./release.sh ./sample-project --dry-run
-```
-
-and:
-
-```bash
-./release.sh https://gitea.example.org/user/sample-project.git --dry-run
-```
-
----
-
-## Phase 5 — Cargo project inspection
-
-- [x] Read `Cargo.toml` with `tomlkit`.
-- [x] Run:
-  ```bash
-  cargo metadata --format-version=1 --no-deps
-  ```
-- [x] Discover:
-  - [x] package name;
-  - [x] version;
-  - [x] repository URL;
-  - [x] binary targets.
-- [x] Detect workspace-only roots.
-- [x] Detect multiple matching packages.
-- [x] Detect multiple binaries.
-- [x] For unsupported ambiguous cases, stop with a clear message instead of guessing.
-- [x] Populate shared dataclasses in `models.py`.
-
-### Acceptance criteria
-
-Dry-run prints a project summary containing:
-
-```text
-package
-version
-repository
-binary
-commit
-tag
-```
-
----
-
-## Phase 6 — Tag/version validation
-
-- [x] Read `tag-prefix` from config.
-- [x] Generate expected tag from Cargo version.
-- [x] If `--tag` is supplied, require an exact match by default.
-- [x] Fail before build on mismatch.
-- [x] Add unit tests.
-
-### Acceptance criteria
-
-For version `0.3.1`:
-
-```text
-expected: v0.3.1
-```
-
-and `--tag v0.3.0` fails clearly.
-
----
-
-## Phase 7 — cargo-binstall metadata policy
-
-- [x] Centralize artifact naming policy.
-- [x] Centralize archive root-directory naming policy.
-- [x] Centralize expected cargo-binstall metadata.
-- [x] Use:
-  ```text
-  {name}-{target}-v{version}.tgz
-  ```
-- [x] Use the corresponding directory name inside the archive.
-- [x] Add target-aware binary extension handling.
-- [x] Inspect `[package.metadata.binstall]`.
-- [x] Report:
-  - [x] missing section;
-  - [x] missing keys;
-  - [x] mismatched values.
-- [x] Represent issues as structured objects rather than plain strings.
-- [x] Add unit tests for generated metadata.
-
-### Acceptance criteria
-
-Dry-run can show:
-
-```text
-Binstall metadata
-  missing: package.metadata.binstall
-  proposed pkg-url: ...
-  proposed pkg-fmt: tgz
-  proposed bin-dir: ...
-```
-
-without modifying the file.
-
----
-
-## Phase 8 — Metadata repair
-
-- [x] Implement `--fix-metadata`.
-- [x] Preserve Cargo.toml formatting/comments with `tomlkit`.
-- [x] Change only the relevant metadata.
-- [x] Print a concise before/after or list of changed keys.
-- [x] Do not commit.
-- [x] Do not push.
-- [x] In dry-run, never write the file even if `--fix-metadata` is present.
-- [x] Add tests using temporary Cargo.toml fixtures.
-
-### Acceptance criteria
-
-Running twice is idempotent:
-
-```bash
-./release.sh ./project --fix-metadata
-./release.sh ./project --fix-metadata
-```
-
-The second run should report no further metadata change.
-
----
-
-## Phase 9 — Prerequisite validation
-
-- [x] Check `git`.
-- [x] Check `cargo`.
-- [x] Check `cross`.
-- [x] Check the container backend used by `cross`.
-- [x] Check Cargo.lock expectations if `locked = true`.
-- [x] Report all missing prerequisites together where practical.
-- [x] In dry-run, report status without building.
-
-### Acceptance criteria
-
-Example output:
-
-```text
-Tools
-  ✓ git
-  ✓ cargo
-  ✓ cross
-  ✓ docker
-```
-
-or a clear grouped error.
-
----
-
-## Phase 10 — Pre-build verification
-
-- [x] Run `cargo metadata`.
-- [x] Run a fast project check before cross compiling.
-- [x] Prefer:
-  ```bash
-  cargo check --locked
-  ```
-  when locked mode is enabled.
-- [x] Honor `--skip-tests` if test/check behavior expands.
-- [x] Stop before expensive builds if verification fails.
-
-### Acceptance criteria
-
-A broken Rust project fails before `cross build` starts.
-
----
-
-## Phase 11 — Build implementation
-
-- [x] Implement `build.py`.
-- [x] Build each configured target using `cross`.
-- [x] Default command:
-  ```bash
-  cross build --release --locked --target TARGET
-  ```
-- [x] Respect configured profile.
-- [x] Respect locked/unlocked mode.
-- [x] Stream compiler output.
-- [x] Locate the produced binary deterministically.
-- [x] Record build outputs in artifact/build dataclasses.
-- [x] Stop on the first failed target.
-- [x] Print target progress.
-
-### Acceptance criteria
-
-All three default binaries are produced for a compatible sample project.
-
----
-
-## Phase 12 — Packaging
-
-- [x] Implement `package.py`.
-- [x] Create or clean a controlled `dist/` directory.
-- [x] For each target:
-  - [x] create archive root directory;
-  - [x] copy the binary;
-  - [x] preserve Unix executable bit;
-  - [x] create `.tgz`;
-  - [x] remove unnecessary staging content if appropriate.
-- [x] Generate deterministic archive filenames.
-- [x] Generate SHA-256 for each archive.
-- [x] Generate `SHA256SUMS`.
-- [x] Add checksum unit tests.
-
-### Acceptance criteria
-
-Expected result resembles:
-
-```text
-dist/
-├── mytool-x86_64-unknown-linux-musl-v0.3.1.tgz
-├── mytool-aarch64-unknown-linux-musl-v0.3.1.tgz
-├── mytool-x86_64-pc-windows-gnu-v0.3.1.tgz
-└── SHA256SUMS
-```
-
-Each archive contains only its expected root directory and binary.
-
----
-
-## Phase 13 — Gitea client
-
-- [x] Implement `gitea.py` using `httpx`.
-- [x] Read token from configured environment variable.
-- [x] Never print the token.
-- [x] Parse Gitea base URL and owner/repository safely.
-- [x] Support explicit CLI/config override if repository URL inference is ambiguous.
-- [x] Implement:
-  - [x] release lookup by tag;
-  - [x] release creation;
-  - [x] asset listing;
-  - [x] asset upload;
-  - [x] asset deletion for replacement mode.
-- [x] Handle HTTP errors with useful messages.
-- [x] Structure API methods so they can be mocked in tests.
-
-### Acceptance criteria
-
-With mocked HTTP responses, tests cover:
-
-- release missing;
-- release exists;
-- upload success;
-- duplicate asset;
-- replacement flow;
-- authentication failure.
-
----
-
-## Phase 14 — Release creation/reuse
-
-- [x] Derive release name from tag.
-- [x] Reuse an existing release with the requested tag.
-- [x] Otherwise create one.
-- [x] Honor:
-  - [x] `--draft`
-  - [x] `--prerelease`
-- [x] Do not create releases in `--dry-run`.
-- [x] Print the intended release destination during dry-run.
-
-### Acceptance criteria
-
-Repeated publication attempts do not create duplicate releases for the same tag.
-
----
-
-## Phase 15 — Asset upload and collision behavior
-
-- [x] Upload all `.tgz` files.
-- [x] Upload `SHA256SUMS`.
-- [x] Before upload, inspect existing asset names.
-- [x] Default on collision: fail.
-- [x] With `--replace-assets`: delete existing matching asset and upload replacement.
-- [x] Never rename duplicates automatically.
-- [x] Print uploaded asset names.
-
-### Acceptance criteria
-
-Running a second time without `--replace-assets` fails safely.
-
-Running with `--replace-assets` replaces exact matching assets only.
-
----
-
-## Phase 16 — Published artifact verification
-
-- [x] Implement `verify.py`.
-- [x] Verify each expected published asset can be resolved.
-- [x] Download to a temporary location where practical.
-- [x] Check SHA-256 against local artifact.
-- [x] Open the archive.
-- [x] Verify expected root directory.
-- [x] Verify expected binary filename.
-- [x] Ensure verification never overwrites local project binaries.
-
-### Acceptance criteria
-
-A deliberately malformed or mismatched uploaded archive is detected.
-
----
-
-## Phase 17 — cargo-binstall verification
-
-- [x] Verify the cargo-binstall contract after upload.
-- [x] Prefer a temporary install location.
-- [x] Avoid modifying the user’s normal Cargo bin directory.
-- [x] Use the local manifest when appropriate.
-- [x] Verify at least the current host-compatible target automatically.
-- [x] For non-host targets, validate URL/archive structure even if execution is impossible.
-- [x] Honor `--skip-binstall-test`.
-
-### Acceptance criteria
-
-On a supported host, the just-published host-target binary can be installed into a temporary bin directory via cargo-binstall or an equivalent safe verification path.
-
----
-
-## Phase 18 — `--stop-after`
-
-- [x] Implement the stage enum.
-- [x] Support:
-  - [x] `inspect`
-  - [x] `metadata`
-  - [x] `verify`
-  - [x] `build`
-  - [x] `package`
-  - [x] `release`
-  - [x] `upload`
-  - [x] `binstall`
-- [x] Stop successfully immediately after the requested completed stage.
-- [x] Ensure cleanup still runs.
-
-### Acceptance criteria
-
-```bash
-./release.sh ./project --stop-after package
-```
-
-builds/packages but never contacts Gitea.
-
----
-
-## Phase 19 — Dry-run completion
-
-- [x] Confirm `--dry-run` performs no mutation.
-- [x] It must not:
-  - [x] edit Cargo.toml;
-  - [x] build;
-  - [x] create releases;
-  - [x] delete assets;
-  - [x] upload.
-- [x] It should report:
-  - [x] project;
-  - [x] version/tag;
-  - [x] metadata status;
-  - [x] proposed fixes;
-  - [x] prerequisite status;
-  - [x] build matrix;
-  - [x] expected artifact names;
-  - [x] expected release destination.
-
-### Acceptance criteria
-
-A dry-run can be used safely against an important repository.
-
----
-
-## Phase 20 — Documentation
-
-- [x] Update README with real behavior only.
-- [x] Document installation:
-  ```bash
-  python3 -m venv .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
-  ```
-- [x] Document wrapper-assisted venv creation.
-- [x] Document prerequisites:
-  - [x] Rust/Cargo
-  - [x] cross
-  - [x] Docker/Podman
-  - [x] cargo-binstall for final verification
-- [x] Document Gitea token:
-  ```bash
-  export GITEA_TOKEN="..."
-  ```
-- [x] Document dry-run.
-- [x] Document metadata repair.
-- [x] Document target list.
-- [x] Document artifact naming.
-- [x] Document known limitations.
-
----
-
-## Phase 21 — Tests and cleanup
-
-- [x] Add unit tests for pure logic.
-- [x] Add manifest fixture tests.
-- [x] Add mocked Gitea tests.
-- [x] Ensure no token is printed in tests/logging.
-- [x] Run Python formatting/linting if tooling is added.
-- [x] Run tests.
-- [x] Remove dead code.
-- [x] Ensure no temporary release artifacts are committed unintentionally.
-- [x] Ensure `.venv/` is gitignored.
-- [x] Ensure Python cache files are gitignored.
-- [x] Ensure `dist/` is ignored unless intentionally retained.
-
-Suggested `.gitignore`:
-
-```text
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-dist/
-```
-
----
-
-# Final integration test
-
-Use a real or disposable single-binary Rust project on Gitea.
-
-## Setup
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-export GITEA_TOKEN="..."
-```
-
-## Inspect
-
-```bash
-./release.sh \
-  https://gitea.example.org/owner/tool.git \
-  --tag v0.1.0 \
-  --dry-run
-```
-
-Confirm:
-
-- [ ] project recognized;
-- [ ] tag/version valid;
-- [ ] binstall metadata status shown;
-- [ ] targets shown;
-- [ ] prerequisites shown;
-- [ ] no mutation.
-
-## Publish
-
-```bash
-./release.sh \
-  https://gitea.example.org/owner/tool.git \
-  --tag v0.1.0 \
-  --fix-metadata
-```
-
-Confirm:
-
-- [ ] metadata corrected locally if needed;
-- [ ] all target builds succeed;
-- [ ] all archives exist;
-- [ ] `SHA256SUMS` exists;
-- [ ] release exists;
-- [ ] assets are attached;
-- [ ] published artifacts verify;
-- [ ] cargo-binstall verification succeeds for the host-compatible artifact.
-
----
-
-# Non-goals for this PoC
-
-Do not delay completion for these:
-
-- [ ] automatic Git commits;
-- [ ] automatic Git pushes;
-- [ ] automatic crate publishing to crates.io;
-- [ ] Windows MSVC cross-compilation;
-- [ ] macOS artifacts;
-- [ ] multi-package workspace orchestration;
-- [ ] multiple binary selection UI;
-- [ ] artifact signing;
-- [ ] release changelog generation;
-- [ ] CI integration;
-- [ ] parallel cross builds.
-
-These can be follow-up work once the single-package release path is reliable.
-
+## Historical compatibility notes worth preserving during the rewrite
+
+These are not new tasks; they are reminders of bugs/edge cases already discovered in real use:
+
+- [ ] A previous release-assets implementation incorrectly paginated an endpoint that returned the full attachment list, causing repeated nonempty results. Preserve the regression test.
+- [ ] Reused Cargo target directories caused stale build-script Git revision metadata to leak into release binaries. Preserve fresh release target directories.
+- [ ] Cross builds may require target-compatible native libraries; do not mask failures such as missing target SQLite.
+- [ ] Some repositories use inherited workspace metadata. Use Cargo's resolved package information while editing only the selected member manifest.
+- [ ] Existing tags must never be silently moved.
+- [ ] Release asset replacement must remain explicitly authorized.

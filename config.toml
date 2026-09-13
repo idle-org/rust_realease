@@ -1,0 +1,18 @@
+[release]
+tag-prefix = "v"
+
+[build]
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-gnu",
+]
+
+profile = "release"
+locked = true
+
+[package]
+format = "tgz"
+
+[gitea]
+token-env = "GITEA_TOKEN"

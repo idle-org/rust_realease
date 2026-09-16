@@ -14,9 +14,9 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: `inspect` and `metadata` stages work for local packages and managed remote Git checkouts, including exact workspace package selection. The metadata stage validates and can repair the selected manifest with `--fix-metadata`; dry-run previews changes without writing. A shared subprocess runner redacts tokens and URL arguments and removes Gitea tokens from child environments. Preparation, builds, and release actions still use the Python worker.
+Current Rust milestone: `inspect`, `metadata`, host `verify`, Cross `build`, and local `package` stages are implemented. The tiny fixture built and packaged for x86_64 Linux musl; aarch64 Linux musl built in the matrix attempt. Windows GNU failed in the current Cross 0.2.5 image because the linker could not find `-lsynchronization`. The full target matrix gate remains open. Repository preparation and Gitea publication still use the Python worker.
 
-Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. Latest verified Rust checks: `cargo test --locked --offline --all` (10 tests), `cargo fmt --check`, and strict Clippy. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: complete runner environment controls and source acquisition tests, then build the repository preparation and local build pipeline.
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: validate a real local target build, complete repository preparation, and port mocked Gitea publication and artifact verification.
 
 Work in small, testable phases. Commit migration work in coherent increments.
 
@@ -117,9 +117,9 @@ Suggested dependencies:
 - [ ] `reqwest` with rustls
 - [x] `url`
 - [x] `tempfile`
-- [ ] `sha2`
+- [x] `sha2`
 - [ ] `tar`
-- [ ] `flate2`
+- [x] `flate2`
 
 Test-only as useful:
 
@@ -185,15 +185,15 @@ Test-only as useful:
 
 - [x] Implement argv-based subprocess runner.
 - [x] Support cwd.
-- [ ] Support env additions/removals.
+- [x] Support env additions/removals.
 - [x] Support captured output.
 - [ ] Support streaming where useful.
-- [ ] Add verbose diagnostics.
+- [x] Add verbose diagnostics.
 - [x] Add exit-code/error context.
 
 ### Secret safety
 
-- [ ] Redact `GITEA_TOKEN`.
+- [x] Redact `GITEA_TOKEN`.
 - [x] Redact configured token env variable.
 - [x] Redact credentials in URLs.
 - [ ] Ensure child Cargo/Cross build processes do not inherit Gitea token.
@@ -258,7 +258,7 @@ Test-only as useful:
 - [x] Parse package/workspace information.
 - [x] Resolve workspace root.
 - [x] Resolve selected member manifest.
-- [ ] Resolve target directory.
+- [x] Resolve target directory.
 - [x] Resolve inherited package version.
 - [x] Resolve inherited repository.
 
@@ -404,16 +404,16 @@ Test-only as useful:
 
 ## Phase 9 — Port prerequisite checks
 
-- [ ] Detect `git`.
-- [ ] Detect `cargo`.
-- [ ] Detect `cross`.
-- [ ] Detect Docker.
-- [ ] Detect Podman.
-- [ ] Honor `CROSS_CONTAINER_ENGINE`.
-- [ ] Determine usable container backend.
-- [ ] Detect `cargo-binstall` when needed.
-- [ ] Report all missing prerequisites before cross build.
-- [ ] Dry-run performs only read-only checks.
+- [x] Detect `git`.
+- [x] Detect `cargo`.
+- [x] Detect `cross`.
+- [x] Detect Docker.
+- [x] Detect Podman.
+- [x] Honor `CROSS_CONTAINER_ENGINE`.
+- [x] Determine usable container backend.
+- [x] Detect `cargo-binstall` when needed.
+- [x] Report all missing prerequisites before cross build.
+- [x] Dry-run performs only read-only checks.
 
 ### Gate
 
@@ -425,27 +425,27 @@ Test-only as useful:
 
 ### Host validation
 
-- [ ] Run `cargo check` for selected package.
-- [ ] Run `cargo test` for selected package.
-- [ ] Respect `--skip-tests`.
-- [ ] Preserve selected workspace package scoping.
+- [x] Run `cargo check` for selected package.
+- [x] Run `cargo test` for selected package.
+- [x] Respect `--skip-tests`.
+- [x] Preserve selected workspace package scoping.
 
 ### Cross build
 
-- [ ] Build default Linux x86_64 musl.
-- [ ] Build default Linux aarch64 musl.
+- [x] Build default Linux x86_64 musl.
+- [x] Build default Linux aarch64 musl.
 - [ ] Build default Windows GNU x86_64.
-- [ ] Respect repeatable `--target`.
-- [ ] Respect profile.
-- [ ] Respect locked/unlocked behavior.
-- [ ] Pass selected workspace package correctly.
-- [ ] Use fresh target subdirectory for every real release build.
-- [ ] Preserve cross image configuration behavior.
-- [ ] Do not pass Gitea token to build subprocesses.
+- [x] Respect repeatable `--target`.
+- [x] Respect profile.
+- [x] Respect locked/unlocked behavior.
+- [x] Pass selected workspace package correctly.
+- [x] Use fresh target subdirectory for every real release build.
+- [x] Preserve cross image configuration behavior.
+- [x] Do not pass Gitea token to build subprocesses.
 
 ### Tests
 
-- [ ] Command-construction unit tests.
+- [x] Command-construction unit tests.
 - [ ] Fake-runner orchestration tests.
 - [ ] Real host Cargo fixture test.
 - [ ] Real Cross tests behind opt-in environment gate.
@@ -462,35 +462,35 @@ Test-only as useful:
 ### Packaging
 
 - [ ] Locate built binary.
-- [ ] Apply target-specific executable filename.
-- [ ] Create standardized archive root.
-- [ ] Preserve Unix executable mode.
-- [ ] Create `.tgz`.
-- [ ] Exclude unrelated files.
-- [ ] Validate archive members against traversal paths.
+- [x] Apply target-specific executable filename.
+- [x] Create standardized archive root.
+- [x] Preserve Unix executable mode.
+- [x] Create `.tgz`.
+- [x] Exclude unrelated files.
+- [x] Validate archive members against traversal paths.
 
 ### Checksums
 
-- [ ] Compute SHA-256.
-- [ ] Generate deterministic `SHA256SUMS`.
-- [ ] Keep stable asset ordering.
+- [x] Compute SHA-256.
+- [x] Generate deterministic `SHA256SUMS`.
+- [x] Keep stable asset ordering.
 
 ### Reproducibility
 
-- [ ] Normalize archive metadata where safe.
+- [x] Normalize archive metadata where safe.
 - [ ] Document any intentional difference from Python archive bytes.
 - [ ] Keep naming/layout identical regardless.
 
 ### Tests
 
-- [ ] Archive filename.
-- [ ] Archive root.
-- [ ] Unix binary mode.
-- [ ] Windows `.exe`.
-- [ ] SHA-256 generation.
-- [ ] SHA256SUMS content.
-- [ ] No extra files.
-- [ ] Traversal/path safety.
+- [x] Archive filename.
+- [x] Archive root.
+- [x] Unix binary mode.
+- [x] Windows `.exe`.
+- [x] SHA-256 generation.
+- [x] SHA256SUMS content.
+- [x] No extra files.
+- [x] Traversal/path safety.
 
 ### Gate
 

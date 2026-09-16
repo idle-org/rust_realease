@@ -1,4 +1,5 @@
 use crate::{
+    build,
     config::{self, Overrides},
     error::Error,
     manifest,
@@ -87,7 +88,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
             tag_prefix: args.tag_prefix,
         },
     )?;
-    let runner = Runner::new(&config.token_env);
+    let runner = Runner::new(&config.token_env).with_verbose(args.verbose);
     let checkout = project::acquire_project(
         &args.source,
         args.tag.as_deref(),
@@ -142,6 +143,12 @@ pub fn run(args: Cli) -> Result<(), Error> {
         };
         println!("{}: {actual} -> {:?}", issue.key, issue.expected);
     }
+    if args.prepare_repo {
+        return Err(Error(
+            "Rust repository preparation is still being ported; use release.sh for preparation."
+                .into(),
+        ));
+    }
     if !issues.is_empty() && args.fix_metadata && !args.dry_run {
         manifest::repair(&selected.manifest, &issues, true)?;
         println!("Metadata repaired locally. Commit and push explicitly if desired.");
@@ -164,10 +171,70 @@ pub fn run(args: Cli) -> Result<(), Error> {
     for (key, value) in policy::binstall_metadata(&config.tag_prefix) {
         println!("Binstall {key}: {value}");
     }
-    let _ = (&config.profile, config.locked, &config.token_env);
+    println!("Release destination: {repository}/releases/tag/{tag}");
+    let needs_cross = args.stop_after != Some(Stage::Verify);
+    let needs_binstall = !args.skip_binstall_test
+        && args
+            .stop_after
+            .is_none_or(|stage| stage.order() >= Stage::Binstall.order());
+    let (problems, engine) = build::prerequisites(
+        &checkout.root,
+        &config,
+        needs_cross,
+        needs_binstall,
+        &runner,
+    );
+    for problem in &problems {
+        println!("Prerequisite: {problem}");
+    }
+    if args.dry_run {
+        println!("Dry run complete: no manifest edits, builds or release mutations.");
+        if !issues.is_empty() || !problems.is_empty() {
+            return Err(Error(
+                "Dry run found the metadata/prerequisite issues reported above.".into(),
+            ));
+        }
+        return Ok(());
+    }
+    if !problems.is_empty() {
+        return Err(Error(
+            "Resolve the prerequisite issues above before building.".into(),
+        ));
+    }
+    build::verify_source(&checkout.root, &selected, &config, args.skip_tests, &runner)?;
+    if args.stop_after == Some(Stage::Verify) {
+        return Ok(());
+    }
+    let engine = engine.ok_or_else(|| Error("No usable Cross container backend.".into()))?;
+    let outputs = build::build(&checkout.root, &selected, &config, &engine, &runner)?;
+    if args.stop_after == Some(Stage::Build) {
+        return Ok(());
+    }
+    let (artifacts, sums) = crate::package::package(
+        &checkout.root,
+        &selected.name,
+        &selected.version,
+        &selected.binary,
+        &outputs,
+    )?;
+    println!(
+        "Artifacts: {}",
+        sums.parent().map_or_else(
+            || sums.display().to_string(),
+            |path| path.display().to_string()
+        )
+    );
+    for artifact in &artifacts {
+        println!(
+            "Packaged {}: {}/{}",
+            artifact.target, artifact.root, artifact.binary
+        );
+    }
+    if args.stop_after == Some(Stage::Package) {
+        return Ok(());
+    }
     Err(Error(
-        "Rust release stages after inspect are still being ported; use release.sh for publication."
-            .into(),
+        "Rust Gitea publication is still being ported; use release.sh for publication.".into(),
     ))
 }
 

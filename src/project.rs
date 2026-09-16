@@ -12,6 +12,7 @@ pub struct SelectedPackage {
     pub binary: String,
     pub manifest: PathBuf,
     pub repository: Option<String>,
+    pub target_directory: PathBuf,
 }
 
 pub struct SourceCheckout {
@@ -92,6 +93,7 @@ struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
     workspace_root: PathBuf,
+    target_directory: PathBuf,
 }
 #[derive(Deserialize)]
 struct Package {
@@ -220,6 +222,7 @@ pub fn inspect(
         binary: binaries[0].name.clone(),
         manifest: member_manifest,
         repository: selected.repository,
+        target_directory: metadata.target_directory,
     })
 }
 fn safe_component(value: &str) -> bool {

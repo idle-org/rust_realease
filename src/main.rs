@@ -1,10 +1,12 @@
 //! Entry point for the incremental Rust replacement.
 
+mod build;
 mod cli;
 mod config;
 mod error;
 mod manifest;
 mod model;
+mod package;
 mod policy;
 mod project;
 mod runner;

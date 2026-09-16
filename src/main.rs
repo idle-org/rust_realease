@@ -8,6 +8,7 @@ mod manifest;
 mod model;
 mod package;
 mod policy;
+mod prepare;
 mod project;
 mod runner;
 

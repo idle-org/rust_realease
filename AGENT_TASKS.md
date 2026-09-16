@@ -14,7 +14,7 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: `inspect`, `metadata`, host `verify`, Cross `build`, and local `package` stages are implemented. The tiny fixture built and packaged all three default targets locally. Its `Cross.toml` selects the current `main` Windows GNU image because the older 0.2.5 image lacks `-lsynchronization` for the active Rust toolchain. `tar` listings and SHA256SUMS passed for all three archives. Repository preparation and Gitea publication still use the Python worker.
+Current Rust milestone: `inspect`, `metadata`, repository preparation, host `verify`, Cross `build`, and local `package` stages are implemented. Preparation has disposable Git tests for dry-run, commit, tag safety, and destination refusal; atomic push still needs an isolated integration test. The tiny fixture built and packaged all three default targets locally. Gitea publication remains in the Python worker.
 
 Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: validate a real local target build, complete repository preparation, and port mocked Gitea publication and artifact verification.
 
@@ -353,46 +353,46 @@ Test-only as useful:
 
 ### Planning
 
-- [ ] Implement preparation plan/diff.
-- [ ] Repair selected Cargo metadata.
-- [ ] Add build/artifact ignore entries.
-- [ ] Add Cargo.lock inclusion rule as required.
-- [ ] Generate Cargo.lock when missing.
-- [ ] Preserve existing lockfile.
-- [ ] Edit/create `Cross.toml`.
-- [ ] Preserve unrelated Cross.toml settings.
-- [ ] Support `--cross-image-tag`.
+- [x] Implement preparation plan/diff.
+- [x] Repair selected Cargo metadata.
+- [x] Add build/artifact ignore entries.
+- [x] Add Cargo.lock inclusion rule as required.
+- [x] Generate Cargo.lock when missing.
+- [x] Preserve existing lockfile.
+- [x] Edit/create `Cross.toml`.
+- [x] Preserve unrelated Cross.toml settings.
+- [x] Support `--cross-image-tag`.
 
 ### Mutation boundaries
 
-- [ ] `--prepare-repo` alone never commits/tags/pushes.
-- [ ] `--commit-preparation` requires correct clean state.
-- [ ] Stage only files belonging to the preparation.
-- [ ] Preserve user's Git signing configuration.
-- [ ] `--create-tag` requires commit-preparation workflow as currently specified.
-- [ ] Create annotated release tag.
-- [ ] Existing correct tag is validated, not moved.
-- [ ] `--push-preparation` requires required predecessor flags.
-- [ ] Verify push destination matches release repository.
+- [x] `--prepare-repo` alone never commits/tags/pushes.
+- [x] `--commit-preparation` requires correct clean state.
+- [x] Stage only files belonging to the preparation.
+- [x] Preserve user's Git signing configuration.
+- [x] `--create-tag` requires commit-preparation workflow as currently specified.
+- [x] Create annotated release tag.
+- [x] Existing correct tag is validated, not moved.
+- [x] `--push-preparation` requires required predecessor flags.
+- [x] Verify push destination matches release repository.
 - [ ] Push branch + tag atomically where current behavior expects it.
-- [ ] Never force push.
+- [x] Never force push.
 
 ### Dry-run
 
-- [ ] Show file diffs.
-- [ ] Show lockfile-generation intention.
-- [ ] Show Git commit/tag/push intention.
-- [ ] Perform none of them.
+- [x] Show file diffs.
+- [x] Show lockfile-generation intention.
+- [x] Show Git commit/tag/push intention.
+- [x] Perform none of them.
 
 ### Tests
 
-- [ ] Clean preparation.
-- [ ] Dirty-worktree refusal.
-- [ ] Existing tag safety.
-- [ ] Destination mismatch refusal.
-- [ ] No implicit Git writes.
-- [ ] Cross.toml preservation.
-- [ ] Missing lockfile.
+- [x] Clean preparation.
+- [x] Dirty-worktree refusal.
+- [x] Existing tag safety.
+- [x] Destination mismatch refusal.
+- [x] No implicit Git writes.
+- [x] Cross.toml preservation.
+- [x] Missing lockfile.
 - [ ] Existing lockfile.
 
 ### Gate

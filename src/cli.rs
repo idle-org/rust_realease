@@ -4,7 +4,7 @@ use crate::{
     error::Error,
     manifest,
     model::Stage,
-    policy, project,
+    policy, prepare, project,
     runner::Runner,
 };
 use clap::Parser;
@@ -91,7 +91,11 @@ pub fn run(args: Cli) -> Result<(), Error> {
     let runner = Runner::new(&config.token_env).with_verbose(args.verbose);
     let checkout = project::acquire_project(
         &args.source,
-        args.tag.as_deref(),
+        if args.prepare_repo {
+            None
+        } else {
+            args.tag.as_deref()
+        },
         args.keep_workdir || args.prepare_repo,
         &runner,
     )?;
@@ -144,10 +148,21 @@ pub fn run(args: Cli) -> Result<(), Error> {
         println!("{}: {actual} -> {:?}", issue.key, issue.expected);
     }
     if args.prepare_repo {
-        return Err(Error(
-            "Rust repository preparation is still being ported; use release.sh for preparation."
-                .into(),
-        ));
+        return prepare::run(
+            &checkout.root,
+            &selected,
+            &config,
+            &repository,
+            prepare::Options {
+                tag: &tag,
+                image_tag: args.cross_image_tag.as_deref(),
+                dry_run: args.dry_run,
+                commit: args.commit_preparation,
+                create_tag: args.create_tag,
+                push: args.push_preparation,
+            },
+            &runner,
+        );
     }
     if !issues.is_empty() && args.fix_metadata && !args.dry_run {
         manifest::repair(&selected.manifest, &issues, true)?;

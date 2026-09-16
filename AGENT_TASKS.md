@@ -14,7 +14,7 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: `inspect`, `metadata`, host `verify`, Cross `build`, and local `package` stages are implemented. The tiny fixture built and packaged for x86_64 Linux musl; aarch64 Linux musl built in the matrix attempt. Windows GNU failed in the current Cross 0.2.5 image because the linker could not find `-lsynchronization`. The full target matrix gate remains open. Repository preparation and Gitea publication still use the Python worker.
+Current Rust milestone: `inspect`, `metadata`, host `verify`, Cross `build`, and local `package` stages are implemented. The tiny fixture built and packaged all three default targets locally. Its `Cross.toml` selects the current `main` Windows GNU image because the older 0.2.5 image lacks `-lsynchronization` for the active Rust toolchain. `tar` listings and SHA256SUMS passed for all three archives. Repository preparation and Gitea publication still use the Python worker.
 
 Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: validate a real local target build, complete repository preparation, and port mocked Gitea publication and artifact verification.
 
@@ -434,7 +434,7 @@ Test-only as useful:
 
 - [x] Build default Linux x86_64 musl.
 - [x] Build default Linux aarch64 musl.
-- [ ] Build default Windows GNU x86_64.
+- [x] Build default Windows GNU x86_64.
 - [x] Respect repeatable `--target`.
 - [x] Respect profile.
 - [x] Respect locked/unlocked behavior.
@@ -452,7 +452,7 @@ Test-only as useful:
 
 ### Gate
 
-- [ ] Default target matrix builds the known integration fixture in the supported environment.
+- [x] Default target matrix builds the known integration fixture in the supported environment.
 - [ ] Fresh target directory regression is covered.
 
 ---
@@ -675,11 +675,11 @@ Use a repository specifically safe for integration testing.
 
 ### Build/package
 
-- [ ] Cargo check passes.
-- [ ] Cargo tests pass.
-- [ ] All default cross builds pass.
-- [ ] Archives are produced.
-- [ ] SHA256SUMS is correct.
+- [x] Cargo check passes.
+- [x] Cargo tests pass.
+- [x] All default cross builds pass.
+- [x] Archives are produced.
+- [x] SHA256SUMS is correct.
 
 ### Publication
 

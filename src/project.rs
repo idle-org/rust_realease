@@ -161,6 +161,120 @@ fn safe_component(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"_.+-".contains(&b))
 }
 
+pub fn origin_url(root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+pub fn validate_checkout_tag(root: &Path, tag: &str) -> Result<(), Error> {
+    let tagged = Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            &format!("refs/tags/{tag}^{{commit}}"),
+        ])
+        .current_dir(root)
+        .output()
+        .map_err(|e| Error(format!("cannot validate Git tag: {e}")))?;
+    if !tagged.status.success() {
+        return Err(Error(format!(
+            "Git tag {tag:?} does not exist. Create it explicitly first."
+        )));
+    }
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| Error(format!("cannot inspect Git HEAD: {e}")))?;
+    if !head.status.success() || head.stdout != tagged.stdout {
+        return Err(Error(format!(
+            "Git tag {tag:?} does not point to this checkout. Check it out explicitly."
+        )));
+    }
+    Ok(())
+}
+
+pub fn normalize_repository(input: &str) -> Result<String, Error> {
+    let candidate = if let Some((user_host, path)) = input.split_once(':') {
+        if !input.contains("://") && user_host.contains('@') {
+            let (user, host) = user_host.split_once('@').unwrap_or(("", ""));
+            if user.is_empty() || host.is_empty() || path.is_empty() {
+                return Err(Error(
+                    "Repository must be an HTTP(S) or SSH Git URL; use --repository-url.".into(),
+                ));
+            }
+            format!("https://{host}/{path}")
+        } else {
+            input.to_owned()
+        }
+    } else {
+        input.to_owned()
+    };
+    let parsed = url::Url::parse(&candidate).map_err(|_| {
+        Error("Repository must be an HTTP(S) or SSH Git URL; use --repository-url.".into())
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https" | "ssh") || parsed.host_str().is_none() {
+        return Err(Error(
+            "Repository must be an HTTP(S) or SSH Git URL; use --repository-url.".into(),
+        ));
+    }
+    if parsed.password().is_some()
+        || (parsed.scheme() != "ssh" && !parsed.username().is_empty())
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(Error(
+            "Repository URLs must not contain credentials, query strings or fragments.".into(),
+        ));
+    }
+    let parts: Vec<_> = parsed
+        .path_segments()
+        .ok_or_else(|| Error("Repository URL must end in owner/repository.".into()))?
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.len() < 2
+        || parts.iter().any(|part| {
+            *part == "."
+                || *part == ".."
+                || !part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+        })
+    {
+        return Err(Error("Repository URL must end in owner/repository.".into()));
+    }
+    let name = parts[parts.len() - 1]
+        .strip_suffix(".git")
+        .unwrap_or(parts[parts.len() - 1]);
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(Error("Repository name is empty.".into()));
+    }
+    let host = parsed.host_str().unwrap_or_default();
+    let authority = if let Some(port) = parsed.port() {
+        format!("{host}:{port}")
+    } else {
+        host.to_owned()
+    };
+    let scheme = if parsed.scheme() == "ssh" {
+        "https"
+    } else {
+        parsed.scheme()
+    };
+    Ok(format!(
+        "{scheme}://{authority}/{}{}{}",
+        parts[..parts.len() - 1].join("/"),
+        "/",
+        name
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +348,28 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("exactly one binary"));
+    }
+
+    #[test]
+    fn repository_url_normalization_rejects_credentials() {
+        assert_eq!(
+            normalize_repository("git@example.com:owner/demo.git").unwrap(),
+            "https://example.com/owner/demo"
+        );
+        assert_eq!(
+            normalize_repository("ssh://git@example.com/owner/demo.git").unwrap(),
+            "https://example.com/owner/demo"
+        );
+        assert_eq!(
+            normalize_repository("https://example.com/gitea/owner/demo.git").unwrap(),
+            "https://example.com/gitea/owner/demo"
+        );
+        for value in [
+            "https://token@example.com/owner/demo",
+            "https://example.com/owner/demo?token=secret",
+            "https://example.com/owner/../demo",
+        ] {
+            assert!(normalize_repository(value).is_err(), "{value}");
+        }
     }
 }

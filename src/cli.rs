@@ -1,6 +1,7 @@
 use crate::{
     config::{self, Overrides},
     error::Error,
+    manifest,
     model::Stage,
     policy, project,
 };
@@ -93,6 +94,9 @@ pub fn run(args: Cli) -> Result<(), Error> {
             args.tag
         )));
     }
+    if args.tag.is_some() {
+        project::validate_checkout_tag(std::path::Path::new(&args.source), &tag)?;
+    }
     println!("Package: {}", selected.name);
     println!("Version: {}", selected.version);
     println!("Binary: {}", selected.binary);
@@ -102,6 +106,43 @@ pub fn run(args: Cli) -> Result<(), Error> {
         .stop_after
         .is_some_and(|stage| stage.order() <= Stage::Inspect.order())
     {
+        return Ok(());
+    }
+    let candidate = args
+        .repository_url
+        .as_deref()
+        .or(selected.repository.as_deref())
+        .map(str::to_owned)
+        .or_else(|| project::origin_url(std::path::Path::new(&args.source)))
+        .ok_or_else(|| {
+            Error(
+                "package.repository is missing; provide --repository-url and --fix-metadata."
+                    .into(),
+            )
+        })?;
+    let repository = project::normalize_repository(&candidate)?;
+    let issues = manifest::changes(&selected.manifest, &repository, &config.tag_prefix)?;
+    if issues.is_empty() {
+        println!("Binstall metadata: valid");
+    }
+    for issue in &issues {
+        let actual = if issue.actual.is_some() {
+            "present"
+        } else {
+            "missing"
+        };
+        println!("{}: {actual} -> {:?}", issue.key, issue.expected);
+    }
+    if !issues.is_empty() && args.fix_metadata && !args.dry_run {
+        manifest::repair(&selected.manifest, &issues, true)?;
+        println!("Metadata repaired locally. Commit and push explicitly if desired.");
+    }
+    if !issues.is_empty() && !args.fix_metadata && !args.dry_run {
+        return Err(Error(
+            "Metadata requires repair. Rerun with --fix-metadata.".into(),
+        ));
+    }
+    if args.stop_after == Some(Stage::Metadata) {
         return Ok(());
     }
     for target in &config.targets {
@@ -114,14 +155,93 @@ pub fn run(args: Cli) -> Result<(), Error> {
     for (key, value) in policy::binstall_metadata(&config.tag_prefix) {
         println!("Binstall {key}: {value}");
     }
-    let _ = (
-        &config.profile,
-        config.locked,
-        &config.token_env,
-        &selected.repository,
-    );
+    let _ = (&config.profile, config.locked, &config.token_env);
     Err(Error(
         "Rust release stages after inspect are still being ported; use release.sh for publication."
             .into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, path::Path};
+
+    fn write(root: &Path, relative: &str, content: &str) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn dry_run_never_edits_and_repair_only_touches_selected_member() {
+        let temp = tempfile::tempdir().unwrap();
+        write(
+            temp.path(),
+            "config.toml",
+            "[build]\ntargets=['x86_64-unknown-linux-musl']\n",
+        );
+        write(
+            temp.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers=['one','two']\nresolver='2'\n",
+        );
+        for name in ["one", "two"] {
+            write(temp.path(), &format!("{name}/Cargo.toml"), &format!("# {name}\n[package]\nname='{name}'\nversion='0.1.0'\nedition='2021'\nrepository='https://example.com/owner/{name}'\n"));
+            write(
+                temp.path(),
+                &format!("{name}/src/main.rs"),
+                "fn main() {}\n",
+            );
+        }
+        let root = temp.path().to_str().unwrap();
+        let config = temp
+            .path()
+            .join("config.toml")
+            .to_string_lossy()
+            .into_owned();
+        let one = temp.path().join("one/Cargo.toml");
+        let two = temp.path().join("two/Cargo.toml");
+        let original_one = fs::read_to_string(&one).unwrap();
+        let original_two = fs::read_to_string(&two).unwrap();
+        let args = Cli::parse_from([
+            "rust_realease",
+            root,
+            "--config",
+            &config,
+            "--package",
+            "one",
+            "--fix-metadata",
+            "--dry-run",
+            "--stop-after",
+            "metadata",
+        ]);
+        run(args).unwrap();
+        assert_eq!(fs::read_to_string(&one).unwrap(), original_one);
+        let args = Cli::parse_from([
+            "rust_realease",
+            root,
+            "--config",
+            &config,
+            "--package",
+            "one",
+            "--fix-metadata",
+            "--stop-after",
+            "metadata",
+        ]);
+        run(args).unwrap();
+        assert_ne!(fs::read_to_string(&one).unwrap(), original_one);
+        assert_eq!(fs::read_to_string(&two).unwrap(), original_two);
+        let args = Cli::parse_from([
+            "rust_realease",
+            root,
+            "--config",
+            &config,
+            "--package",
+            "one",
+            "--stop-after",
+            "metadata",
+        ]);
+        run(args).unwrap();
+    }
 }

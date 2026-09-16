@@ -3,6 +3,7 @@
 mod cli;
 mod config;
 mod error;
+mod manifest;
 mod model;
 mod policy;
 mod project;

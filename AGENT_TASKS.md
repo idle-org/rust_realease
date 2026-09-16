@@ -16,6 +16,8 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 
 Current Rust milestone: `inspect` and `metadata` stages work for local packages and managed remote Git checkouts, including exact workspace package selection. The metadata stage validates and can repair the selected manifest with `--fix-metadata`; dry-run previews changes without writing. A shared subprocess runner redacts tokens and URL arguments and removes Gitea tokens from child environments. Preparation, builds, and release actions still use the Python worker.
 
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. Latest verified Rust checks: `cargo test --locked --offline --all` (10 tests), `cargo fmt --check`, and strict Clippy. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: complete runner environment controls and source acquisition tests, then build the repository preparation and local build pipeline.
+
 Work in small, testable phases. Commit migration work in coherent increments.
 
 ---
@@ -52,7 +54,7 @@ Work in small, testable phases. Commit migration work in coherent increments.
 
 ### Baseline test run
 
-- [ ] Run the existing Python unit/mocked test suite.
+- [x] Run the existing Python unit/mocked test suite.
 - [ ] Run existing opt-in cargo-binstall tests where the environment permits.
 - [ ] Save representative dry-run outputs for fixtures.
 - [ ] Save representative metadata-repair diffs.
@@ -84,37 +86,37 @@ Create or preserve fixtures for:
 
 ## Phase 1 — Create the Rust application skeleton
 
-- [ ] Add `Cargo.toml`.
-- [ ] Add `Cargo.lock`.
-- [ ] Add `src/main.rs`.
-- [ ] Add modules:
-  - [ ] `cli.rs`
-  - [ ] `config.rs`
-  - [ ] `error.rs`
-  - [ ] `model.rs`
-  - [ ] `runner.rs`
-  - [ ] `project.rs`
-  - [ ] `manifest.rs`
-  - [ ] `prepare.rs`
-  - [ ] `build.rs`
-  - [ ] `package.rs`
-  - [ ] `gitea.rs`
-  - [ ] `verify.rs`
+- [x] Add `Cargo.toml`.
+- [x] Add `Cargo.lock`.
+- [x] Add `src/main.rs`.
+- [x] Add modules:
+  - [x] `cli.rs`
+  - [x] `config.rs`
+  - [x] `error.rs`
+  - [x] `model.rs`
+  - [x] `runner.rs`
+  - [x] `project.rs`
+  - [x] `manifest.rs`
+  - [x] `prepare.rs`
+  - [x] `build.rs`
+  - [x] `package.rs`
+  - [x] `gitea.rs`
+  - [x] `verify.rs`
 - [ ] Add test fixture directory.
 - [ ] Add `cargo fmt --check` gate.
 - [ ] Add strict Clippy gate.
-- [ ] Add `cargo test --all` gate.
+- [x] Add `cargo test --all` gate.
 
 Suggested dependencies:
 
-- [ ] `clap`
-- [ ] `serde`
-- [ ] `toml`
-- [ ] `toml_edit`
+- [x] `clap`
+- [x] `serde`
+- [x] `toml`
+- [x] `toml_edit`
 - [ ] `thiserror`
 - [ ] `reqwest` with rustls
-- [ ] `url`
-- [ ] `tempfile`
+- [x] `url`
+- [x] `tempfile`
 - [ ] `sha2`
 - [ ] `tar`
 - [ ] `flate2`
@@ -127,9 +129,9 @@ Test-only as useful:
 
 ### Gate
 
-- [ ] Rust binary builds.
-- [ ] `--help` works.
-- [ ] No release behavior has been removed from Python yet.
+- [x] Rust binary builds.
+- [x] `--help` works.
+- [x] No release behavior has been removed from Python yet.
 
 ---
 
@@ -137,38 +139,38 @@ Test-only as useful:
 
 ### Models
 
-- [ ] Define selected package model.
+- [x] Define selected package model.
 - [ ] Define target/artifact model.
 - [ ] Define release destination model.
 - [ ] Define preparation plan model.
-- [ ] Define stage enum.
-- [ ] Define config model.
+- [x] Define stage enum.
+- [x] Define config model.
 
 ### Configuration
 
-- [ ] Parse current `config.toml`.
-- [ ] Preserve defaults.
-- [ ] Implement CLI-over-config precedence.
-- [ ] Support custom config path.
-- [ ] Validate target/profile/package format settings.
+- [x] Parse current `config.toml`.
+- [x] Preserve defaults.
+- [x] Implement CLI-over-config precedence.
+- [x] Support custom config path.
+- [x] Validate target/profile/package format settings.
 
 ### Pure policy
 
-- [ ] Implement expected tag generation.
-- [ ] Implement empty/custom tag prefix.
-- [ ] Implement archive naming.
-- [ ] Implement archive root naming.
-- [ ] Implement target-specific binary filename.
-- [ ] Implement expected binstall metadata.
+- [x] Implement expected tag generation.
+- [x] Implement empty/custom tag prefix.
+- [x] Implement archive naming.
+- [x] Implement archive root naming.
+- [x] Implement target-specific binary filename.
+- [x] Implement expected binstall metadata.
 - [ ] Implement release URL construction.
-- [ ] Implement stage ordering.
+- [x] Implement stage ordering.
 
 ### Tests
 
 - [ ] Port pure Python tests to Rust.
-- [ ] Add tests for non-`v` tags.
-- [ ] Add tests for Windows `.exe`.
-- [ ] Add tests for malformed config.
+- [x] Add tests for non-`v` tags.
+- [x] Add tests for Windows `.exe`.
+- [x] Add tests for malformed config.
 - [ ] Add tests for CLI precedence.
 
 ### Gate
@@ -181,26 +183,26 @@ Test-only as useful:
 
 ### Runner
 
-- [ ] Implement argv-based subprocess runner.
-- [ ] Support cwd.
+- [x] Implement argv-based subprocess runner.
+- [x] Support cwd.
 - [ ] Support env additions/removals.
-- [ ] Support captured output.
+- [x] Support captured output.
 - [ ] Support streaming where useful.
 - [ ] Add verbose diagnostics.
-- [ ] Add exit-code/error context.
+- [x] Add exit-code/error context.
 
 ### Secret safety
 
 - [ ] Redact `GITEA_TOKEN`.
-- [ ] Redact configured token env variable.
-- [ ] Redact credentials in URLs.
+- [x] Redact configured token env variable.
+- [x] Redact credentials in URLs.
 - [ ] Ensure child Cargo/Cross build processes do not inherit Gitea token.
-- [ ] Test error messages for token leakage.
+- [x] Test error messages for token leakage.
 
 ### Gate
 
-- [ ] All runner tests pass.
-- [ ] No shell-string execution is used for normal commands.
+- [x] All runner tests pass.
+- [x] No shell-string execution is used for normal commands.
 
 ---
 
@@ -208,39 +210,39 @@ Test-only as useful:
 
 ### Local source
 
-- [ ] Accept local paths.
-- [ ] Resolve workspace root safely.
-- [ ] Never delete/move local source.
-- [ ] Read Git origin.
+- [x] Accept local paths.
+- [x] Resolve workspace root safely.
+- [x] Never delete/move local source.
+- [x] Read Git origin.
 - [ ] Inspect worktree cleanliness.
 - [ ] Resolve HEAD commit.
 
 ### Remote source
 
-- [ ] Accept HTTP/HTTPS Git URLs.
-- [ ] Accept SSH URLs.
-- [ ] Accept SCP-style URLs.
-- [ ] Clone to temporary directory.
-- [ ] Checkout requested tag exactly.
-- [ ] Implement default cleanup.
-- [ ] Implement `--keep-workdir`.
-- [ ] Preserve preparation-mode retained checkout behavior.
+- [x] Accept HTTP/HTTPS Git URLs.
+- [x] Accept SSH URLs.
+- [x] Accept SCP-style URLs.
+- [x] Clone to temporary directory.
+- [x] Checkout requested tag exactly.
+- [x] Implement default cleanup.
+- [x] Implement `--keep-workdir`.
+- [x] Preserve preparation-mode retained checkout behavior.
 
 ### Repository URL normalization
 
-- [ ] Normalize `.git` suffix.
-- [ ] Convert supported SSH/SCP repository identity to web/API identity safely.
-- [ ] Reject URLs with embedded HTTP credentials for release metadata.
-- [ ] Reject query strings where existing behavior does.
-- [ ] Support explicit `--repository-url`.
+- [x] Normalize `.git` suffix.
+- [x] Convert supported SSH/SCP repository identity to web/API identity safely.
+- [x] Reject URLs with embedded HTTP credentials for release metadata.
+- [x] Reject query strings where existing behavior does.
+- [x] Support explicit `--repository-url`.
 
 ### Tests
 
 - [ ] Port repository URL parsing tests.
 - [ ] Test temp cleanup.
 - [ ] Test keep-workdir.
-- [ ] Test local source remains untouched.
-- [ ] Test exact tag checkout.
+- [x] Test local source remains untouched.
+- [x] Test exact tag checkout.
 
 ### Gate
 
@@ -252,23 +254,23 @@ Test-only as useful:
 
 ### Metadata
 
-- [ ] Execute `cargo metadata --format-version=1 --no-deps`.
-- [ ] Parse package/workspace information.
-- [ ] Resolve workspace root.
-- [ ] Resolve selected member manifest.
+- [x] Execute `cargo metadata --format-version=1 --no-deps`.
+- [x] Parse package/workspace information.
+- [x] Resolve workspace root.
+- [x] Resolve selected member manifest.
 - [ ] Resolve target directory.
-- [ ] Resolve inherited package version.
-- [ ] Resolve inherited repository.
+- [x] Resolve inherited package version.
+- [x] Resolve inherited repository.
 
 ### Selection
 
-- [ ] Standalone package works without `--package`.
-- [ ] Multi-member workspace requires exact package selection when ambiguous.
-- [ ] `--package NAME` selects exact package.
-- [ ] Unknown package fails clearly.
-- [ ] Library-only package fails clearly.
-- [ ] Multi-binary selected package fails clearly.
-- [ ] Exactly one binary is accepted.
+- [x] Standalone package works without `--package`.
+- [x] Multi-member workspace requires exact package selection when ambiguous.
+- [x] `--package NAME` selects exact package.
+- [x] Unknown package fails clearly.
+- [x] Library-only package fails clearly.
+- [x] Multi-binary selected package fails clearly.
+- [x] Exactly one binary is accepted.
 
 ### Tests
 
@@ -286,32 +288,32 @@ Test-only as useful:
 
 ### Reading/editing
 
-- [ ] Read selected `Cargo.toml` with `toml_edit`.
-- [ ] Detect missing/incorrect `package.repository`.
-- [ ] Derive repository from Git origin where safe.
-- [ ] Validate `[package.metadata.binstall]`.
-- [ ] Detect unsupported/conflicting custom binstall options.
+- [x] Read selected `Cargo.toml` with `toml_edit`.
+- [x] Detect missing/incorrect `package.repository`.
+- [x] Derive repository from Git origin where safe.
+- [x] Validate `[package.metadata.binstall]`.
+- [x] Detect unsupported/conflicting custom binstall options.
 
 ### Repair
 
-- [ ] Implement proposed-change plan.
-- [ ] Implement `--fix-metadata`.
-- [ ] Preserve comments/formatting where practical.
-- [ ] Edit only selected package manifest.
-- [ ] Make repair idempotent.
-- [ ] Report every changed key.
+- [x] Implement proposed-change plan.
+- [x] Implement `--fix-metadata`.
+- [x] Preserve comments/formatting where practical.
+- [x] Edit only selected package manifest.
+- [x] Make repair idempotent.
+- [x] Report every changed key.
 
 ### Dry-run
 
 - [ ] Print proposed diff.
-- [ ] Never write.
+- [x] Never write.
 
 ### Tests
 
 - [ ] Port metadata validation tests.
 - [ ] Port repair tests.
-- [ ] Add idempotency test.
-- [ ] Add workspace member-only edit test.
+- [x] Add idempotency test.
+- [x] Add workspace member-only edit test.
 - [ ] Add inherited workspace version/repository cases.
 
 ### Gate
@@ -323,10 +325,10 @@ Test-only as useful:
 
 ## Phase 7 — Port version/tag validation
 
-- [ ] Compute expected tag from selected package version.
-- [ ] Apply configured/CLI tag prefix.
-- [ ] Validate explicit `--tag`.
-- [ ] Validate local tag points to HEAD where required.
+- [x] Compute expected tag from selected package version.
+- [x] Apply configured/CLI tag prefix.
+- [x] Validate explicit `--tag`.
+- [x] Validate local tag points to HEAD where required.
 - [ ] Validate remote tag exists and points to expected commit before publication.
 - [ ] Preserve preparation-mode distinction: intended tag naming without checking out an existing tag.
 - [ ] Never move an existing tag.
@@ -336,8 +338,8 @@ Test-only as useful:
 
 - [ ] Matching tag.
 - [ ] Mismatched tag.
-- [ ] Empty prefix.
-- [ ] Existing tag at wrong commit.
+- [x] Empty prefix.
+- [x] Existing tag at wrong commit.
 - [ ] Preparation with intended new tag.
 - [ ] Ordinary publication without matching tag.
 

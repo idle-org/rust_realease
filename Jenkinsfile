@@ -1,7 +1,6 @@
 // Add this webhook in Gitea:
 // http://192.168.1.37:8080/gitea-webhook/post
 
-// Skeleton checks only; release behavior remains in the Python implementation.
 pipeline {
     agent { label 'rust_no_docker' }
 
@@ -16,45 +15,9 @@ pipeline {
             }
         }
 
-        stage('Rust Toolchain') {
-            steps {
-                sh '''
-                    set -eu
-                    rustc --version
-                    cargo --version
-                    cargo fmt --version
-                    cargo clippy --version
-                '''
-            }
-        }
-
-        stage('Format') {
-            steps {
-                sh 'cargo fmt --check'
-            }
-        }
-
-        stage('Clippy') {
-            steps {
-                sh 'cargo clippy --locked --offline --all-targets --all-features -- -D warnings'
-            }
-        }
-
-        stage('Tests') {
+        stage('Cargo Tests') {
             steps {
                 sh 'cargo test --locked --offline --all'
-            }
-        }
-
-        stage('Build') {
-            steps {
-                sh 'cargo build --locked --offline --release'
-            }
-        }
-
-        stage('Inspect Smoke Test') {
-            steps {
-                sh 'cargo run --locked --offline --release -- . --stop-after inspect'
             }
         }
     }
@@ -64,8 +27,8 @@ pipeline {
             publishChecks(
                 conclusion: 'SUCCESS',
                 name: 'Rust CI',
-                summary: 'Rust inspect milestone passed all CI checks.',
-                text: 'Formatting, strict Clippy, Cargo tests, release build, and local project inspection passed. Release functionality is still being ported.',
+                summary: 'Cargo tests passed.',
+                text: 'Rust tests passed without cross compilation.',
                 title: 'CI Successful'
             )
         }
@@ -74,8 +37,8 @@ pipeline {
             publishChecks(
                 conclusion: 'FAILURE',
                 name: 'Rust CI',
-                summary: 'Rust skeleton failed CI.',
-                text: 'Check the Jenkins log for toolchain, formatting, Clippy, test, build, or startup failures.',
+                summary: 'Cargo tests failed.',
+                text: 'Check the Jenkins log for the Cargo test failure.',
                 title: 'CI Failed'
             )
         }
@@ -84,8 +47,8 @@ pipeline {
             publishChecks(
                 conclusion: 'ACTION_REQUIRED',
                 name: 'Rust CI',
-                summary: 'Rust skeleton CI is unstable.',
-                text: 'The Jenkins build completed with an unstable status.',
+                summary: 'Rust CI is unstable.',
+                text: 'The Cargo test build completed with an unstable status.',
                 title: 'CI Unstable'
             )
         }

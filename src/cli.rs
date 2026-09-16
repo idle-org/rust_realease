@@ -4,6 +4,7 @@ use crate::{
     manifest,
     model::Stage,
     policy, project,
+    runner::Runner,
 };
 use clap::Parser;
 use std::path::PathBuf;
@@ -59,8 +60,8 @@ pub struct Cli {
     pub cross_image_tag: Option<String>,
     #[arg(long)]
     pub repository_url: Option<String>,
-    #[arg(long, default_value = "config.toml")]
-    pub config: PathBuf,
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 pub fn run(args: Cli) -> Result<(), Error> {
@@ -78,7 +79,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
         ));
     }
     let config = config::load(
-        &args.config,
+        args.config.as_deref(),
         Overrides {
             targets: args.target,
             profile: args.profile,
@@ -86,16 +87,24 @@ pub fn run(args: Cli) -> Result<(), Error> {
             tag_prefix: args.tag_prefix,
         },
     )?;
-    let selected = project::inspect(&args.source, args.package.as_deref())?;
+    let runner = Runner::new(&config.token_env);
+    let checkout = project::acquire_project(
+        &args.source,
+        args.tag.as_deref(),
+        args.keep_workdir || args.prepare_repo,
+        &runner,
+    )?;
+    let root = checkout
+        .root
+        .to_str()
+        .ok_or_else(|| Error("Project path is not UTF-8.".into()))?;
+    let selected = project::inspect(root, args.package.as_deref(), &runner)?;
     let tag = policy::expected_tag(&selected.version, &config.tag_prefix);
     if args.tag.as_ref().is_some_and(|provided| provided != &tag) {
         return Err(Error(format!(
             "Tag {:?} does not match package version; expected {tag:?}.",
             args.tag
         )));
-    }
-    if args.tag.is_some() {
-        project::validate_checkout_tag(std::path::Path::new(&args.source), &tag)?;
     }
     println!("Package: {}", selected.name);
     println!("Version: {}", selected.version);
@@ -113,7 +122,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
         .as_deref()
         .or(selected.repository.as_deref())
         .map(str::to_owned)
-        .or_else(|| project::origin_url(std::path::Path::new(&args.source)))
+        .or_else(|| project::origin_url(&checkout.root, &runner))
         .ok_or_else(|| {
             Error(
                 "package.repository is missing; provide --repository-url and --fix-metadata."

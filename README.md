@@ -1,6 +1,6 @@
 # Rust Binstall Publisher
 
-> Rust migration status: the Rust binary currently supports local project inspection and metadata validation/repair through `--stop-after metadata`, including exact workspace `--package` selection. The Python worker remains the release implementation for builds and publication. The `target_test_project` submodule is a tiny binary fixture for upcoming build tests.
+> Rust migration status: the Rust binary currently supports local and remote Git project inspection and metadata validation/repair through `--stop-after metadata`, including exact workspace `--package` selection. Remote sources are cloned to managed temporary directories; `--keep-workdir` retains them for review. The Python worker remains the release implementation for builds and publication. The `target_test_project` submodule is a tiny binary fixture for upcoming build tests.
 
 Build and inspect locally with `cargo run -- target_test_project --stop-after inspect`. Validate metadata with `cargo run -- target_test_project --stop-after metadata`; add `--dry-run` to preview proposed repairs or `--fix-metadata` to write them. Run the Rust checks with `cargo fmt --check`, `cargo clippy --offline --all-targets --all-features -- -D warnings`, and `cargo test --offline`. Live Gitea tests are deferred until a disposable token is available.
 

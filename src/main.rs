@@ -7,6 +7,7 @@ mod manifest;
 mod model;
 mod policy;
 mod project;
+mod runner;
 
 use clap::Parser;
 

@@ -14,7 +14,7 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: local `inspect` and `metadata` stages work for standalone packages and exact workspace package selection. The metadata stage validates and can repair the selected manifest with `--fix-metadata`; dry-run previews changes without writing. Remote acquisition, preparation, builds, and release actions still use the Python worker.
+Current Rust milestone: `inspect` and `metadata` stages work for local packages and managed remote Git checkouts, including exact workspace package selection. The metadata stage validates and can repair the selected manifest with `--fix-metadata`; dry-run previews changes without writing. A shared subprocess runner redacts tokens and URL arguments and removes Gitea tokens from child environments. Preparation, builds, and release actions still use the Python worker.
 
 Work in small, testable phases. Commit migration work in coherent increments.
 

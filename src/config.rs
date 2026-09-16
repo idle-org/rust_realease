@@ -45,10 +45,14 @@ pub struct Overrides {
     pub unlocked: bool,
     pub tag_prefix: Option<String>,
 }
-pub fn load(path: &Path, overrides: Overrides) -> Result<Config, Error> {
-    let source = fs::read_to_string(path)
-        .map_err(|e| Error(format!("cannot read config {}: {e}", path.display())))?;
-    parse(&source, overrides)
+pub fn load(path: Option<&Path>, overrides: Overrides) -> Result<Config, Error> {
+    if let Some(path) = path {
+        let source = fs::read_to_string(path)
+            .map_err(|e| Error(format!("cannot read config {}: {e}", path.display())))?;
+        parse(&source, overrides)
+    } else {
+        parse(include_str!("../config.toml"), overrides)
+    }
 }
 fn parse(source: &str, overrides: Overrides) -> Result<Config, Error> {
     let file: FileConfig =
@@ -149,5 +153,6 @@ mod tests {
         assert_eq!(config.tag_prefix, "");
         assert!(parse("[build]\ntargets=['bad']", Overrides::default()).is_err());
         assert!(parse("[package]\nformat='zip'", Overrides::default()).is_err());
+        assert_eq!(load(None, Overrides::default()).unwrap().targets.len(), 3);
     }
 }

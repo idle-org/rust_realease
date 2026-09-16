@@ -1,9 +1,8 @@
-use crate::error::Error;
+use crate::{error::Error, runner::Runner};
 use serde::Deserialize;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[derive(Debug)]
@@ -13,6 +12,80 @@ pub struct SelectedPackage {
     pub binary: String,
     pub manifest: PathBuf,
     pub repository: Option<String>,
+}
+
+pub struct SourceCheckout {
+    pub root: PathBuf,
+    _temporary: Option<tempfile::TempDir>,
+}
+
+pub fn acquire_project(
+    source: &str,
+    tag: Option<&str>,
+    keep_workdir: bool,
+    runner: &Runner,
+) -> Result<SourceCheckout, Error> {
+    let expanded = if let Some(suffix) = source.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(suffix))
+            .unwrap_or_else(|| PathBuf::from(source))
+    } else {
+        PathBuf::from(source)
+    };
+    if expanded.exists() {
+        if !expanded.is_dir() {
+            return Err(Error("Local source must be a directory.".into()));
+        }
+        let root = expanded
+            .canonicalize()
+            .map_err(|e| Error(format!("cannot resolve local source: {e}")))?;
+        if let Some(tag) = tag {
+            validate_checkout_tag(&root, tag, runner)?;
+        }
+        return Ok(SourceCheckout {
+            root,
+            _temporary: None,
+        });
+    }
+    normalize_repository(source)?;
+    let temporary = tempfile::Builder::new()
+        .prefix("rust-realease-")
+        .tempdir()
+        .map_err(|e| Error(format!("cannot create temporary checkout: {e}")))?;
+    let root = temporary.path().join("source");
+    clone_to(source, &root, tag, runner)?;
+    if keep_workdir {
+        let retained = temporary.keep();
+        println!("Temporary workdir kept at {}", retained.display());
+        Ok(SourceCheckout {
+            root,
+            _temporary: None,
+        })
+    } else {
+        Ok(SourceCheckout {
+            root,
+            _temporary: Some(temporary),
+        })
+    }
+}
+
+fn clone_to(source: &str, root: &Path, tag: Option<&str>, runner: &Runner) -> Result<(), Error> {
+    let parent = root
+        .parent()
+        .ok_or_else(|| Error("Invalid clone destination.".into()))?;
+    let destination = root
+        .to_str()
+        .ok_or_else(|| Error("Clone destination is not UTF-8.".into()))?;
+    runner.output("git", &["clone", "--", source, destination], parent)?;
+    if let Some(tag) = tag {
+        runner.output(
+            "git",
+            &["checkout", "--detach", &format!("refs/tags/{tag}")],
+            root,
+        )?;
+        validate_checkout_tag(root, tag, runner)?;
+    }
+    Ok(())
 }
 #[derive(Deserialize)]
 struct Metadata {
@@ -35,7 +108,11 @@ struct Target {
     kind: Vec<String>,
 }
 
-pub fn inspect(source: &str, package_name: Option<&str>) -> Result<SelectedPackage, Error> {
+pub fn inspect(
+    source: &str,
+    package_name: Option<&str>,
+    runner: &Runner,
+) -> Result<SelectedPackage, Error> {
     let root = Path::new(source);
     if !root.is_dir() {
         return Err(Error(
@@ -47,18 +124,12 @@ pub fn inspect(source: &str, package_name: Option<&str>) -> Result<SelectedPacka
         .map_err(|e| Error(format!("cannot read {}: {e}", manifest.display())))?;
     let source_doc: toml::Value = toml::from_str(&source_text)
         .map_err(|e| Error(format!("invalid {}: {e}", manifest.display())))?;
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version=1", "--no-deps"])
-        .current_dir(root)
-        .output()
-        .map_err(|e| Error(format!("cannot run cargo metadata: {e}")))?;
-    if !output.status.success() {
-        return Err(Error(format!(
-            "cargo metadata failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    let metadata: Metadata = serde_json::from_slice(&output.stdout)
+    let output = runner.output(
+        "cargo",
+        &["metadata", "--format-version=1", "--no-deps"],
+        root,
+    )?;
+    let metadata: Metadata = serde_json::from_slice(&output)
         .map_err(|e| Error(format!("invalid cargo metadata output: {e}")))?;
     let members: Vec<_> = metadata
         .packages
@@ -161,39 +232,30 @@ fn safe_component(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"_.+-".contains(&b))
 }
 
-pub fn origin_url(root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(root)
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+pub fn origin_url(root: &Path, runner: &Runner) -> Option<String> {
+    runner
+        .text("git", &["remote", "get-url", "origin"], root)
+        .ok()
 }
 
-pub fn validate_checkout_tag(root: &Path, tag: &str) -> Result<(), Error> {
-    let tagged = Command::new("git")
-        .args([
-            "rev-parse",
-            "--verify",
-            &format!("refs/tags/{tag}^{{commit}}"),
-        ])
-        .current_dir(root)
-        .output()
-        .map_err(|e| Error(format!("cannot validate Git tag: {e}")))?;
-    if !tagged.status.success() {
-        return Err(Error(format!(
-            "Git tag {tag:?} does not exist. Create it explicitly first."
-        )));
-    }
-    let head = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(root)
-        .output()
-        .map_err(|e| Error(format!("cannot inspect Git HEAD: {e}")))?;
-    if !head.status.success() || head.stdout != tagged.stdout {
+pub fn validate_checkout_tag(root: &Path, tag: &str, runner: &Runner) -> Result<(), Error> {
+    let tagged = runner
+        .text(
+            "git",
+            &[
+                "rev-parse",
+                "--verify",
+                &format!("refs/tags/{tag}^{{commit}}"),
+            ],
+            root,
+        )
+        .map_err(|_| {
+            Error(format!(
+                "Git tag {tag:?} does not exist. Create it explicitly first."
+            ))
+        })?;
+    let head = runner.text("git", &["rev-parse", "HEAD"], root)?;
+    if head != tagged {
         return Err(Error(format!(
             "Git tag {tag:?} does not point to this checkout. Check it out explicitly."
         )));
@@ -294,7 +356,12 @@ mod tests {
             "[package]\nname='solo'\nversion='0.1.0'\nedition='2021'\n",
         );
         write(temp.path(), "src/main.rs", "fn main() {}\n");
-        let selected = inspect(temp.path().to_str().unwrap(), None).unwrap();
+        let selected = inspect(
+            temp.path().to_str().unwrap(),
+            None,
+            &Runner::new("GITEA_TOKEN"),
+        )
+        .unwrap();
         assert_eq!(selected.name, "solo");
         assert_eq!(selected.binary, "solo");
 
@@ -317,15 +384,20 @@ mod tests {
             );
         }
         let root = workspace.path().to_str().unwrap();
-        assert!(inspect(root, None)
+        assert!(inspect(root, None, &Runner::new("GITEA_TOKEN"))
             .unwrap_err()
             .to_string()
             .contains("--package"));
-        assert!(inspect(root, Some("missing"))
+        assert!(inspect(root, Some("missing"), &Runner::new("GITEA_TOKEN"))
             .unwrap_err()
             .to_string()
             .contains("not found"));
-        assert_eq!(inspect(root, Some("two")).unwrap().binary, "two");
+        assert_eq!(
+            inspect(root, Some("two"), &Runner::new("GITEA_TOKEN"))
+                .unwrap()
+                .binary,
+            "two"
+        );
     }
 
     #[test]
@@ -338,13 +410,13 @@ mod tests {
         );
         write(temp.path(), "src/lib.rs", "pub fn hello() {}\n");
         let root = temp.path().to_str().unwrap();
-        assert!(inspect(root, None)
+        assert!(inspect(root, None, &Runner::new("GITEA_TOKEN"))
             .unwrap_err()
             .to_string()
             .contains("exactly one binary"));
         write(temp.path(), "src/main.rs", "fn main() {}\n");
         write(temp.path(), "src/bin/extra.rs", "fn main() {}\n");
-        assert!(inspect(root, None)
+        assert!(inspect(root, None, &Runner::new("GITEA_TOKEN"))
             .unwrap_err()
             .to_string()
             .contains("exactly one binary"));
@@ -371,5 +443,52 @@ mod tests {
         ] {
             assert!(normalize_repository(value).is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn local_source_is_retained_and_clone_checks_out_exact_tag() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("origin");
+        fs::create_dir(&source).unwrap();
+        let runner = Runner::new("GITEA_TOKEN");
+        runner.output("git", &["init", "-q"], &source).unwrap();
+        fs::write(source.join("version.txt"), "one").unwrap();
+        runner
+            .output("git", &["add", "version.txt"], &source)
+            .unwrap();
+        let commit_args = [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "first",
+        ];
+        runner.output("git", &commit_args, &source).unwrap();
+        runner.output("git", &["tag", "v0.1.0"], &source).unwrap();
+        fs::write(source.join("version.txt"), "two").unwrap();
+        runner
+            .output("git", &["add", "version.txt"], &source)
+            .unwrap();
+        runner.output("git", &commit_args, &source).unwrap();
+
+        let local = acquire_project(source.to_str().unwrap(), None, false, &runner).unwrap();
+        assert_eq!(local.root, source.canonicalize().unwrap());
+        drop(local);
+        assert!(source.exists());
+        assert!(validate_checkout_tag(&source, "v0.1.0", &runner).is_err());
+
+        let clone = temp.path().join("checkout");
+        clone_to(source.to_str().unwrap(), &clone, Some("v0.1.0"), &runner).unwrap();
+        assert_eq!(
+            fs::read_to_string(clone.join("version.txt")).unwrap(),
+            "one"
+        );
+        validate_checkout_tag(&clone, "v0.1.0", &runner).unwrap();
+        let missing = temp.path().join("missing-tag");
+        assert!(clone_to(source.to_str().unwrap(), &missing, Some("v9.9.9"), &runner).is_err());
     }
 }

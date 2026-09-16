@@ -52,9 +52,9 @@ pipeline {
             }
         }
 
-        stage('Skeleton Smoke Test') {
+        stage('Inspect Smoke Test') {
             steps {
-                sh 'cargo run --locked --offline --release'
+                sh 'cargo run --locked --offline --release -- . --stop-after inspect'
             }
         }
     }
@@ -64,8 +64,8 @@ pipeline {
             publishChecks(
                 conclusion: 'SUCCESS',
                 name: 'Rust CI',
-                summary: 'Rust skeleton passed all CI checks.',
-                text: 'Formatting, strict Clippy, Cargo tests, release build, and skeleton startup passed. Release functionality is not implemented yet.',
+                summary: 'Rust inspect milestone passed all CI checks.',
+                text: 'Formatting, strict Clippy, Cargo tests, release build, and local project inspection passed. Release functionality is still being ported.',
                 title: 'CI Successful'
             )
         }

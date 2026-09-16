@@ -6,6 +6,16 @@ Migrate `rust_realease` from its current Python implementation to a native Rust 
 
 The Python implementation remains the behavioral oracle until the Rust replacement passes parity and end-to-end release validation.
 
+## Updated product goals (2026-09-17)
+
+- Keep useful local unit and fixture tests throughout the rewrite.
+- Accept a project and eventually produce either local artifacts or a remote release.
+- Support local and remote project repair before building. An explicitly requested repair workflow may create an additional fix commit, tag, and push; ordinary release runs retain the existing mutation boundaries until that workflow is implemented and tested.
+- Defer live API release tests until a disposable token is provided.
+- Use the small `target_test_project` submodule for fast build and cross-target experiments.
+
+Current Rust milestone: `--stop-after inspect` works for local standalone packages and exact workspace package selection. Later stages, remote acquisition, and release actions still use the Python worker.
+
 Work in small, testable phases. Commit migration work in coherent increments.
 
 ---

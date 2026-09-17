@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -63,7 +64,54 @@ def main():
             result = invoke(base + [str(FIXTURE), "--dry-run", "--stop-after", "verify"])
             if result.returncode == 0 or "tag" not in result.stdout.lower():
                 raise AssertionError(f"{name} dry run missed the local tag:\n{result.stdout}")
-    print("Python/Rust fixture inspect and metadata smoke parity passed.")
+    with tempfile.TemporaryDirectory(prefix="rust-release-parity-") as folder:
+        root = Path(folder)
+        (root / "Cargo.toml").write_text(
+            "[workspace]\nmembers=['one','two']\nresolver='2'\n", encoding="utf-8"
+        )
+        for member in ("one", "two"):
+            package = root / member
+            (package / "src").mkdir(parents=True)
+            (package / "Cargo.toml").write_text(
+                f"[package]\nname='{member}'\nversion='0.1.0'\nedition='2021'\n",
+                encoding="utf-8",
+            )
+            (package / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+        for label, extra, expected in (
+            ("ambiguous workspace", [], False),
+            ("selected workspace member", ["--package", "two"], True),
+            ("unknown workspace member", ["--package", "missing"], False),
+        ):
+            results = {
+                name: invoke(base + [str(root), "--stop-after", "inspect"] + extra)
+                for name, base in commands.items()
+            }
+            for name, result in results.items():
+                if (result.returncode == 0) != expected:
+                    raise AssertionError(
+                        f"{name} {label} success differs:\n{result.stdout}\n{result.stderr}"
+                    )
+                if expected and field(result.stdout, "Package") != "two":
+                    raise AssertionError(f"{name} selected the wrong workspace package")
+        for kind in ("library-only", "multiple binaries"):
+            source = root / kind
+            (source / "src").mkdir(parents=True)
+            (source / "Cargo.toml").write_text(
+                "[package]\nname='shape'\nversion='0.1.0'\nedition='2021'\n",
+                encoding="utf-8",
+            )
+            if kind == "library-only":
+                (source / "src" / "lib.rs").write_text("pub fn value() {}\n", encoding="utf-8")
+            else:
+                (source / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+                bins = source / "src" / "bin"
+                bins.mkdir()
+                (bins / "other.rs").write_text("fn main() {}\n", encoding="utf-8")
+            for name, base in commands.items():
+                result = invoke(base + [str(source), "--stop-after", "inspect"])
+                if result.returncode == 0:
+                    raise AssertionError(f"{name} accepted {kind} unexpectedly")
+    print("Python/Rust fixture and Cargo package-shape smoke parity passed.")
 
 
 if __name__ == "__main__":

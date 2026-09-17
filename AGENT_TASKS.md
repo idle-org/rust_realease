@@ -14,13 +14,13 @@ The user explicitly requested removal of the Python implementation and its launc
 - Exercise live API releases only with a disposable token and repository.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, authenticated private downloads, and isolated cargo-binstall orchestration are implemented. The disposable private `target_test_project` v0.1.1 release completed through the Rust CLI with `--skip-binstall-test`: all three Cross builds, four uploads, authenticated downloads, checksums, and archive layout checks passed. The earlier v0.1.0 upload was independently verified after its expected anonymous-download failure revealed the repository was private. Public anonymous download and live cargo-binstall installation still need a public disposable release. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
+Current Rust milestone: the public disposable `target_test_project` [v0.1.2 release](https://proxy.dandaedre.com/gitea/idle-org/target_test_project/releases/tag/v0.1.2) completed through the Rust CLI. All three Cross builds, four uploads, anonymous downloads, SHA256SUMS and archive checks, and isolated real cargo-binstall installs passed. The earlier private v0.1.1 release passed with `--skip-binstall-test` and authenticated download verification; v0.1.0 exposed the private-repository anonymous-download limitation. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
 
 The opt-in real `cargo-binstall` integration fixture installs all three archive contracts from a temporary local HTTP server into isolated directories. Its test-only invocation permits HTTP; production verification continues to require HTTPS. The private live Gitea release does not allow cargo-binstall downloads, even with `GITEA_TOKEN` set.
 
-Rust-only install check after cleanup: `cargo install --path . --locked --offline --root /tmp/rust_realease_install --target-dir target` succeeded, and the installed binary reported version `0.1.0`. Formatting, Clippy, 28 regular Rust tests, and both opt-in verification tests passed.
+Rust-only install check after cleanup: `cargo install --path . --locked --offline --root /tmp/rust_realease_install --target-dir target` succeeded, and the installed binary reported version `0.1.0`. Formatting, Clippy, 28 regular Rust tests, and all three opt-in verification tests passed.
 
-Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep public release and cargo-binstall gates open until a public disposable repository is available. The old Python baseline had 45 passing tests and two opt-in tests skipped before removal. CI runs Cargo tests only; Cross and live Gitea tests are separate checks.
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. The public release gate passed on v0.1.2; broader historical fixture parity and live preparation checks remain open. The old Python baseline had 45 passing tests and two opt-in tests skipped before removal. CI runs Cargo tests only; Cross and live Gitea tests are separate checks.
 
 Parity note: Python and Rust `target_test_project --dry-run --stop-after verify` both report the missing local release tag and exit nonzero. The Rust dry run now reports this as a prerequisite without creating a tag. Python and Rust metadata-stage runs both succeed on the fixture. Output formatting differs; full fixture parity remains open.
 
@@ -694,12 +694,12 @@ Use a repository specifically safe for integration testing.
 ### Publication
 
 - [x] Matching remote tag is validated.
-- [x] Release is created or reused (creation verified on private fixture).
+- [x] Release creation works live; reuse is covered by a local HTTP mock.
 - [x] All assets upload.
-- [ ] Anonymous downloads work.
+- [x] Anonymous downloads work for the public v0.1.2 release.
 - [x] Authenticated private downloads work.
 - [x] Checksums/layouts verify for the private fixture.
-- [ ] cargo-binstall installs from the live release into a temporary location.
+- [x] cargo-binstall installs all three targets from the live public release into temporary locations.
 
 ### Safety
 
@@ -711,13 +711,13 @@ Use a repository specifically safe for integration testing.
 
 ### Gate
 
-- [ ] One complete public Rust-driven release, including anonymous download and live cargo-binstall, succeeds end to end. The private v0.1.1 release passed with an explicit binstall skip.
+- [x] One complete public Rust-driven release, including anonymous download and live cargo-binstall, succeeds end to end (v0.1.2).
 
 ---
 
 ## Phase 17 — Cut over the entry point
 
-The user explicitly requested this cutover before live publication validation; keep the live gate open.
+The user explicitly requested this cutover before live publication validation; the public v0.1.2 release subsequently passed.
 
 - [x] Make the Rust executable the documented/default tool.
 - [x] Remove `release.sh` at the user's request.
@@ -790,18 +790,18 @@ Check:
 - [ ] Metadata validation/repair is preserved.
 - [ ] Preparation + explicit commit/tag/push is preserved.
 - [ ] Tag safety is preserved.
-- [ ] Fresh-target build behavior is preserved.
-- [ ] Default three-target cross build is preserved.
-- [ ] `.tgz` naming/layout is preserved.
-- [ ] SHA256SUMS is preserved.
-- [ ] Gitea release creation/reuse works.
-- [ ] Asset collision/refusal/replacement behavior is preserved.
-- [ ] Asset-list pagination regression remains fixed.
-- [ ] Anonymous artifact validation works.
-- [ ] Real isolated cargo-binstall verification works.
-- [ ] Token security/redaction passes.
-- [ ] Rust formatting, Clippy, unit, mocked, and integration tests pass.
-- [ ] At least one live disposable end-to-end Rust release has succeeded.
+- [x] Fresh-target build behavior is preserved.
+- [x] Default three-target cross build is preserved.
+- [x] `.tgz` naming/layout is preserved.
+- [x] SHA256SUMS is preserved.
+- [x] Gitea release creation works live; reuse is mocked.
+- [x] Asset collision/refusal/replacement behavior passes mocked tests.
+- [x] Asset-list pagination regression remains fixed.
+- [x] Anonymous artifact validation works.
+- [x] Real isolated cargo-binstall verification works.
+- [x] Token security/redaction passes local tests and the live run's output review.
+- [x] Rust formatting, Clippy, unit, mocked, and opt-in integration tests pass.
+- [x] At least one live disposable end-to-end Rust release has succeeded (v0.1.2).
 - [ ] Python runtime/dependencies are removable with no feature regression.
 
 ---

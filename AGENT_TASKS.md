@@ -20,6 +20,8 @@ Progress tracking: check a task only when the Rust behavior is implemented and l
 
 Parity note: Python and Rust `target_test_project --dry-run --stop-after verify` both report the missing local release tag and exit nonzero. The Rust dry run now reports this as a prerequisite without creating a tag. Python and Rust metadata-stage runs both succeed on the fixture. Output formatting differs; full fixture parity remains open.
 
+Run the repeatable local smoke comparison with `.venv/bin/python tests/parity_smoke.py`. It builds the Rust binary and compares inspect/metadata fields on the tiny fixture; when the fixture tag is absent, it also checks that both dry runs reject it. The full fixture matrix is still pending.
+
 Work in small, testable phases. Commit migration work in coherent increments.
 
 ---
@@ -629,12 +631,12 @@ Create a migration-only harness/script or test utility.
 
 For each non-mutating fixture:
 
-- [ ] run Python implementation;
-- [ ] run Rust implementation;
+- [x] run Python implementation;
+- [x] run Rust implementation;
 - [ ] normalize nondeterministic temp paths;
-- [ ] compare success/failure;
-- [ ] compare selected package;
-- [ ] compare version/tag;
+- [x] compare success/failure;
+- [x] compare selected package;
+- [x] compare version/tag;
 - [ ] compare metadata findings;
 - [ ] compare planned targets;
 - [ ] compare artifact names;

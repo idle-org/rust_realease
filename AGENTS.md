@@ -2,7 +2,7 @@
 
 ## Current user direction
 
-The user explicitly authorized removing the Python worker, Python-only tests, `requirements.txt`, and `release.sh` before live Gitea parity validation, and requested a Rust-first usage README. The Rust implementation is now the active CLI. The migration plan below remains historical guidance for preserving behavior; its instruction to retain Python until every parity gate passes has been superseded by this explicit request. Keep live release and cargo-binstall validation tasks open until a disposable token is available.
+The user explicitly authorized removing the Python worker, Python-only tests, `requirements.txt`, and `release.sh` before live Gitea parity validation, and requested a Rust-first usage README. The Rust implementation is now the active CLI. The migration plan below remains historical guidance for preserving behavior; its instruction to retain Python until every parity gate passes has been superseded by this explicit request. A private disposable release has passed authenticated verification. Keep public anonymous download and live cargo-binstall validation open until a public disposable repository is available.
 
 ## Mission
 

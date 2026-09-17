@@ -11,14 +11,14 @@ The user explicitly requested removal of the Python implementation and its launc
 - Keep useful local unit and fixture tests throughout the rewrite.
 - Accept a project and eventually produce either local artifacts or a remote release.
 - Support local and remote project repair before building. An explicitly requested repair workflow may create an additional fix commit, tag, and push; ordinary release runs retain the existing mutation boundaries until that workflow is implemented and tested.
-- Defer live API release tests until a disposable token is provided.
+- Exercise live API releases only with a disposable token and repository.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, authenticated private downloads, and isolated cargo-binstall orchestration are implemented. The disposable private `target_test_project` release was created with all three target archives and SHA256SUMS; an opt-in live test verified their authenticated downloads, checksums, and layouts. Public anonymous download and real cargo-binstall installation still need a public disposable release. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The tiny fixture built and packaged all three default targets locally. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
+Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, authenticated private downloads, and isolated cargo-binstall orchestration are implemented. The disposable private `target_test_project` v0.1.1 release completed through the Rust CLI with `--skip-binstall-test`: all three Cross builds, four uploads, authenticated downloads, checksums, and archive layout checks passed. The earlier v0.1.0 upload was independently verified after its expected anonymous-download failure revealed the repository was private. Public anonymous download and live cargo-binstall installation still need a public disposable release. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
 
 The opt-in real `cargo-binstall` integration fixture installs all three archive contracts from a temporary local HTTP server into isolated directories. Its test-only invocation permits HTTP; production verification continues to require HTTPS. The private live Gitea release does not allow cargo-binstall downloads, even with `GITEA_TOKEN` set.
 
-Rust-only install check after cleanup: `cargo install --path . --locked --offline --root /tmp/rust_realease_install --target-dir target` succeeded, and the installed binary reported version `0.1.0`. Formatting, Clippy, and all 26 Rust tests passed.
+Rust-only install check after cleanup: `cargo install --path . --locked --offline --root /tmp/rust_realease_install --target-dir target` succeeded, and the installed binary reported version `0.1.0`. Formatting, Clippy, 28 regular Rust tests, and both opt-in verification tests passed.
 
 Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep public release and cargo-binstall gates open until a public disposable repository is available. The old Python baseline had 45 passing tests and two opt-in tests skipped before removal. CI runs Cargo tests only; Cross and live Gitea tests are separate checks.
 
@@ -676,7 +676,7 @@ Use a repository specifically safe for integration testing.
 
 ### Preparation
 
-- [ ] Rust tool inspects it successfully.
+- [x] Rust tool inspects it successfully.
 - [ ] Dry-run is correct.
 - [ ] Rust preparation succeeds.
 - [ ] Commit creation works when explicitly authorized.
@@ -711,7 +711,7 @@ Use a repository specifically safe for integration testing.
 
 ### Gate
 
-- [ ] One complete real Rust-driven release succeeds end to end.
+- [ ] One complete public Rust-driven release, including anonymous download and live cargo-binstall, succeeds end to end. The private v0.1.1 release passed with an explicit binstall skip.
 
 ---
 

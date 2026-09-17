@@ -14,9 +14,9 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: `inspect`, `metadata`, repository preparation, host `verify`, Cross `build`, and local `package` stages are implemented. Preparation has disposable Git tests for dry-run, commit, tag safety, and destination refusal; atomic push still needs an isolated integration test. The tiny fixture built and packaged all three default targets locally. Gitea publication remains in the Python worker.
+Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, and isolated cargo-binstall orchestration are implemented. Gitea paths pass local HTTP mock tests; live publication and real cargo-binstall installation still need a disposable token. Preparation has disposable Git tests for dry-run, commit, tag safety, and destination refusal; atomic push still needs an isolated integration test. The tiny fixture built and packaged all three default targets locally.
 
-Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: validate a real local target build, complete repository preparation, and port mocked Gitea publication and artifact verification.
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: isolated preparation-push test, broader parity fixtures, and offline publication edge cases.
 
 Work in small, testable phases. Commit migration work in coherent increments.
 
@@ -329,7 +329,7 @@ Test-only as useful:
 - [x] Apply configured/CLI tag prefix.
 - [x] Validate explicit `--tag`.
 - [x] Validate local tag points to HEAD where required.
-- [ ] Validate remote tag exists and points to expected commit before publication.
+- [x] Validate remote tag exists and points to expected commit before publication.
 - [ ] Preserve preparation-mode distinction: intended tag naming without checking out an existing tag.
 - [ ] Never move an existing tag.
 - [ ] Never rewrite Cargo package version.
@@ -502,38 +502,38 @@ Test-only as useful:
 
 ### Client
 
-- [ ] Parse base instance/repository coordinates.
-- [ ] Load token only from configured environment variable.
-- [ ] Use HTTPS for authenticated publication.
-- [ ] Set useful user-agent.
-- [ ] Implement contextual API errors.
+- [x] Parse base instance/repository coordinates.
+- [x] Load token only from configured environment variable.
+- [x] Use HTTPS for authenticated publication.
+- [x] Set useful user-agent.
+- [x] Implement contextual API errors.
 
 ### Releases
 
-- [ ] Get remote tag.
-- [ ] Get release by tag.
-- [ ] Create release.
-- [ ] Reuse existing release.
-- [ ] Preserve draft/prerelease fields.
+- [x] Get remote tag.
+- [x] Get release by tag.
+- [x] Create release.
+- [x] Reuse existing release.
+- [x] Preserve draft/prerelease fields.
 
 ### Assets
 
-- [ ] List release assets once according to current Gitea API behavior.
-- [ ] Do not reintroduce the historical repeated pagination bug.
-- [ ] Upload assets.
-- [ ] Fail on duplicate filename by default.
-- [ ] Delete/replace only under `--replace-assets`.
-- [ ] Never touch unrelated assets.
+- [x] List release assets once according to current Gitea API behavior.
+- [x] Do not reintroduce the historical repeated pagination bug.
+- [x] Upload assets.
+- [x] Fail on duplicate filename by default.
+- [x] Delete/replace only under `--replace-assets`.
+- [x] Never touch unrelated assets.
 
 ### Tests
 
-- [ ] Mock release absence -> create.
-- [ ] Mock existing release -> reuse.
-- [ ] Asset listing regression test.
-- [ ] Collision refusal.
-- [ ] Explicit replacement.
-- [ ] HTTP failure context.
-- [ ] Token redaction.
+- [x] Mock release absence -> create.
+- [x] Mock existing release -> reuse.
+- [x] Asset listing regression test.
+- [x] Collision refusal.
+- [x] Explicit replacement.
+- [x] HTTP failure context.
+- [x] Token redaction.
 
 ### Gate
 
@@ -545,25 +545,25 @@ Test-only as useful:
 
 ### Artifact verification
 
-- [ ] Build expected asset URLs.
-- [ ] Download published archives.
-- [ ] Prefer anonymous downloads for public assets.
-- [ ] Validate SHA256SUMS.
-- [ ] Validate archive root.
-- [ ] Validate binary filename.
-- [ ] Validate Unix executable bit where meaningful.
+- [x] Build expected asset URLs.
+- [x] Download published archives.
+- [x] Prefer anonymous downloads for public assets.
+- [x] Validate SHA256SUMS.
+- [x] Validate archive root.
+- [x] Validate binary filename.
+- [x] Validate Unix executable bit where meaningful.
 
 ### cargo-binstall
 
-- [ ] Use selected package manifest.
-- [ ] Create temporary Cargo home/install root.
-- [ ] Install without touching user's normal Cargo bin.
+- [x] Use selected package manifest.
+- [x] Create temporary Cargo home/install root.
+- [x] Install without touching user's normal Cargo bin.
 - [ ] Verify all default target contracts where supported.
-- [ ] Respect `--skip-binstall-test`.
+- [x] Respect `--skip-binstall-test`.
 
 ### Tests
 
-- [ ] Local/mock HTTP asset server integration.
+- [x] Local/mock HTTP asset server integration.
 - [ ] Real cargo-binstall integration fixture.
 - [ ] Check all three default target artifact layouts.
 

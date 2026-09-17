@@ -241,6 +241,10 @@ pub fn origin_url(root: &Path, runner: &Runner) -> Option<String> {
         .ok()
 }
 
+pub fn head_commit(root: &Path, runner: &Runner) -> Result<String, Error> {
+    runner.text("git", &["rev-parse", "HEAD"], root)
+}
+
 pub fn validate_checkout_tag(root: &Path, tag: &str, runner: &Runner) -> Result<(), Error> {
     let tagged = runner
         .text(

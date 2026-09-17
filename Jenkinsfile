@@ -17,7 +17,7 @@ pipeline {
 
         stage('Cargo Tests') {
             steps {
-                sh 'cargo test --locked --offline --all'
+                sh 'cargo test --locked --all'
             }
         }
     }

@@ -2,10 +2,12 @@ use crate::{
     build,
     config::{self, Overrides},
     error::Error,
+    gitea::Gitea,
     manifest,
     model::Stage,
     policy, prepare, project,
     runner::Runner,
+    verify,
 };
 use clap::Parser;
 use std::path::PathBuf;
@@ -104,6 +106,11 @@ pub fn run(args: Cli) -> Result<(), Error> {
         .to_str()
         .ok_or_else(|| Error("Project path is not UTF-8.".into()))?;
     let selected = project::inspect(root, args.package.as_deref(), &runner)?;
+    let publishing = !args.prepare_repo
+        && !args.dry_run
+        && args
+            .stop_after
+            .is_none_or(|stage| stage.order() >= Stage::Release.order());
     let tag = policy::expected_tag(&selected.version, &config.tag_prefix);
     if args.tag.as_ref().is_some_and(|provided| provided != &tag) {
         return Err(Error(format!(
@@ -122,6 +129,19 @@ pub fn run(args: Cli) -> Result<(), Error> {
     {
         return Ok(());
     }
+    if publishing
+        && !runner
+            .text(
+                "git",
+                &["status", "--porcelain", "--untracked-files=normal"],
+                &checkout.root,
+            )?
+            .is_empty()
+    {
+        return Err(Error(
+            "Publication requires a clean checkout before metadata repair.".into(),
+        ));
+    }
     let candidate = args
         .repository_url
         .as_deref()
@@ -135,6 +155,15 @@ pub fn run(args: Cli) -> Result<(), Error> {
             )
         })?;
     let repository = project::normalize_repository(&candidate)?;
+    if publishing {
+        if let Some(origin) = project::origin_url(&checkout.root, &runner) {
+            if project::normalize_repository(&origin)? != repository {
+                return Err(Error(
+                    "Git origin differs from the release repository.".into(),
+                ));
+            }
+        }
+    }
     let issues = manifest::changes(&selected.manifest, &repository, &config.tag_prefix)?;
     if issues.is_empty() {
         println!("Binstall metadata: valid");
@@ -216,6 +245,18 @@ pub fn run(args: Cli) -> Result<(), Error> {
             "Resolve the prerequisite issues above before building.".into(),
         ));
     }
+    if publishing {
+        project::validate_checkout_tag(&checkout.root, &tag, &runner)?;
+        if std::env::var(&config.token_env)
+            .ok()
+            .is_none_or(|value| value.is_empty())
+        {
+            return Err(Error(format!(
+                "Set {} before publishing.",
+                config.token_env
+            )));
+        }
+    }
     build::verify_source(&checkout.root, &selected, &config, args.skip_tests, &runner)?;
     if args.stop_after == Some(Stage::Verify) {
         return Ok(());
@@ -248,9 +289,28 @@ pub fn run(args: Cli) -> Result<(), Error> {
     if args.stop_after == Some(Stage::Package) {
         return Ok(());
     }
-    Err(Error(
-        "Rust Gitea publication is still being ported; use release.sh for publication.".into(),
-    ))
+    let commit = project::head_commit(&checkout.root, &runner)?;
+    let api = Gitea::new(&repository, &config.token_env)?;
+    let release = api.ensure_release(&tag, &commit, args.draft, args.prerelease)?;
+    println!("Release ready: {tag}");
+    if args.stop_after == Some(Stage::Release) {
+        return Ok(());
+    }
+    let mut paths: Vec<&std::path::Path> = artifacts.iter().map(|a| a.path.as_path()).collect();
+    paths.push(sums.as_path());
+    api.upload(release.id, &paths, args.replace_assets)?;
+    if args.stop_after == Some(Stage::Upload) {
+        return Ok(());
+    }
+    if release.draft {
+        return Err(Error("Draft uploaded. Public verification requires publishing the draft; use --stop-after upload for draft workflows.".into()));
+    }
+    verify::verify_published(&repository, &tag, &artifacts, &sums)?;
+    if !args.skip_binstall_test {
+        verify::verify_binstall(&checkout.root, &selected, &config.targets, &runner)?;
+    }
+    println!("Release completed and published artifacts verified.");
+    Ok(())
 }
 
 #[cfg(test)]

@@ -140,7 +140,7 @@ fn unix_mode(metadata: &fs::Metadata) -> u32 {
     }
 }
 
-fn checksum(path: &Path) -> Result<String, Error> {
+pub fn checksum(path: &Path) -> Result<String, Error> {
     let mut input =
         File::open(path).map_err(|e| Error(format!("cannot open {}: {e}", path.display())))?;
     let mut hasher = Sha256::new();

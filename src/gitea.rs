@@ -31,15 +31,15 @@ pub struct Gitea {
 
 impl Gitea {
     pub fn new(repository: &str, token_env: &str) -> Result<Self, Error> {
-        let token = env::var(token_env)
-            .ok()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| Error(format!("Set {token_env} before publishing.")))?;
         if !repository.starts_with("https://") {
             return Err(Error(
                 "Authenticated Gitea publishing requires HTTPS.".into(),
             ));
         }
+        let token = env::var(token_env)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| Error(format!("Set {token_env} before publishing.")))?;
         Self::with_token(repository, &token)
     }
 
@@ -419,8 +419,34 @@ mod tests {
     }
 
     #[test]
+    fn missing_or_mismatched_remote_tag_stops_before_release_mutation() {
+        for (status, body, expected) in [
+            (404, "{}", "missing"),
+            (200, r#"{"commit":{"sha":"other"}}"#, "differs"),
+        ] {
+            let (host, handle) = server(vec![Reply {
+                method: "GET",
+                path: "/api/v1/repos/team/demo/tags/v0.1.0",
+                status,
+                body,
+            }]);
+            let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+            let error = api
+                .ensure_release("v0.1.0", "abc", false, false)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+            assert_eq!(handle.join().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
     fn encodes_tag_and_requires_https() {
         assert_eq!(encode("v1.0+build"), "v1.0%2Bbuild");
-        assert!(Gitea::new("http://example.com/team/demo", "GITEA_TOKEN").is_err());
+        assert!(Gitea::new("http://example.com/team/demo", "GITEA_TOKEN")
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("HTTPS"));
     }
 }

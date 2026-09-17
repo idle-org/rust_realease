@@ -18,6 +18,8 @@ Current Rust milestone: inspection, metadata, preparation, host verification, Cr
 
 Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: isolated preparation-push test, broader parity fixtures, and offline publication edge cases.
 
+Parity note: Python and Rust `target_test_project --dry-run --stop-after verify` both report the missing local release tag and exit nonzero. The Rust dry run now reports this as a prerequisite without creating a tag. Python and Rust metadata-stage runs both succeed on the fixture. Output formatting differs; full fixture parity remains open.
+
 Work in small, testable phases. Commit migration work in coherent increments.
 
 ---

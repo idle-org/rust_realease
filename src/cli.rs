@@ -221,13 +221,18 @@ pub fn run(args: Cli) -> Result<(), Error> {
         && args
             .stop_after
             .is_none_or(|stage| stage.order() >= Stage::Binstall.order());
-    let (problems, engine) = build::prerequisites(
+    let (mut problems, engine) = build::prerequisites(
         &checkout.root,
         &config,
         needs_cross,
         needs_binstall,
         &runner,
     );
+    if args.dry_run {
+        if let Err(error) = project::validate_checkout_tag(&checkout.root, &tag, &runner) {
+            problems.push(error.to_string());
+        }
+    }
     for problem in &problems {
         println!("Prerequisite: {problem}");
     }

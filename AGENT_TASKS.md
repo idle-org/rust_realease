@@ -14,9 +14,9 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, and isolated cargo-binstall orchestration are implemented. Gitea paths pass local HTTP mock tests; live publication and real cargo-binstall installation still need a disposable token. Preparation has disposable Git tests for dry-run, commit, tag safety, and destination refusal; atomic push still needs an isolated integration test. The tiny fixture built and packaged all three default targets locally.
+Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, and isolated cargo-binstall orchestration are implemented. Gitea paths pass local HTTP mock tests; live publication and real cargo-binstall installation still need a disposable token. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The tiny fixture built and packaged all three default targets locally.
 
-Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: isolated preparation-push test, broader parity fixtures, and offline publication edge cases.
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: broader parity fixtures and offline publication edge cases.
 
 Parity note: Python and Rust `target_test_project --dry-run --stop-after verify` both report the missing local release tag and exit nonzero. The Rust dry run now reports this as a prerequisite without creating a tag. Python and Rust metadata-stage runs both succeed on the fixture. Output formatting differs; full fixture parity remains open.
 
@@ -378,7 +378,7 @@ Test-only as useful:
 - [x] Existing correct tag is validated, not moved.
 - [x] `--push-preparation` requires required predecessor flags.
 - [x] Verify push destination matches release repository.
-- [ ] Push branch + tag atomically where current behavior expects it.
+- [x] Push branch + tag atomically where current behavior expects it.
 - [x] Never force push.
 
 ### Dry-run

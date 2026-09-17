@@ -656,4 +656,72 @@ mod tests {
         assert_eq!(fs::read_to_string(root.join("Cargo.toml")).unwrap(), before);
         assert!(!root.join("Cross.toml").exists());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn authorized_preparation_pushes_branch_and_tag_atomically() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (temp, project, config, runner) = fixture();
+        let root = temp.path();
+        let transport = tempfile::tempdir().unwrap();
+        let bare = transport.path().join("remote.git");
+        fs::create_dir(&bare).unwrap();
+        runner
+            .output("git", &["init", "--bare", "-q"], &bare)
+            .unwrap();
+        let ssh = transport.path().join("local-ssh");
+        fs::write(
+            &ssh,
+            format!("#!/bin/sh\nexec git-receive-pack '{}'\n", bare.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o700)).unwrap();
+        runner
+            .output(
+                "git",
+                &["config", "core.sshCommand", ssh.to_str().unwrap()],
+                root,
+            )
+            .unwrap();
+        runner
+            .output(
+                "git",
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "ssh://git@example.org/team/demo.git",
+                ],
+                root,
+            )
+            .unwrap();
+        run(
+            root,
+            &project,
+            &config,
+            "https://example.org/team/demo",
+            Options {
+                tag: "v0.1.0",
+                image_tag: None,
+                dry_run: false,
+                commit: true,
+                create_tag: true,
+                push: true,
+            },
+            &runner,
+        )
+        .unwrap();
+        let local = runner.text("git", &["rev-parse", "HEAD"], root).unwrap();
+        let remote = runner
+            .text("git", &["rev-parse", "refs/heads/main"], &bare)
+            .unwrap();
+        assert_eq!(local, remote);
+        assert_eq!(
+            runner
+                .text("git", &["rev-parse", "refs/tags/v0.1.0^{commit}"], &bare)
+                .unwrap(),
+            local
+        );
+    }
 }

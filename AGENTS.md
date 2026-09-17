@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Current user direction
+
+The user explicitly authorized removing the Python worker, Python-only tests, `requirements.txt`, and `release.sh` before live Gitea parity validation, and requested a Rust-first usage README. The Rust implementation is now the active CLI. The migration plan below remains historical guidance for preserving behavior; its instruction to retain Python until every parity gate passes has been superseded by this explicit request. Keep live release and cargo-binstall validation tasks open until a disposable token is available.
+
 ## Mission
 
 Rewrite `rust_realease` from Python into Rust while preserving the behavior, safety guarantees, release format, and user-facing CLI of the existing tool.

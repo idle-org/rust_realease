@@ -13,7 +13,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(about = "Inspect and prepare Rust release inputs", version)]
+#[command(about = "Build and publish Rust binary releases to Gitea", version)]
 pub struct Cli {
     /// Local directory or Git URL.
     pub source: String,

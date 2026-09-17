@@ -2,9 +2,9 @@
 
 ## Goal
 
-Migrate `rust_realease` from its current Python implementation to a native Rust CLI without regressing release behavior.
+Maintain the native Rust `rust_realease` CLI and finish its remaining release-validation gates without regressing the documented behavior.
 
-The Python implementation remains the behavioral oracle until the Rust replacement passes parity and end-to-end release validation.
+The user explicitly requested removal of the Python implementation and its launcher/dependencies before live Gitea validation. Historical Python parity results remain in Git history; the Rust CLI and tests are now the active implementation.
 
 ## Updated product goals (2026-09-17)
 
@@ -14,13 +14,17 @@ The Python implementation remains the behavioral oracle until the Rust replaceme
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, and isolated cargo-binstall orchestration are implemented. Gitea paths pass local HTTP mock tests; live publication and real cargo-binstall installation still need a disposable token. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The tiny fixture built and packaged all three default targets locally.
+Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, and isolated cargo-binstall orchestration are implemented. Gitea paths pass local HTTP mock tests; live publication and real cargo-binstall installation still need a disposable token. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The tiny fixture built and packaged all three default targets locally. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
 
-Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep phase gates open until their full fixture/parity criteria pass. The Python baseline has 45 passing tests and two opt-in tests skipped. CI runs Cargo tests only; Cross and live Gitea tests are deferred. Next work: broader parity fixtures and offline publication edge cases.
+Rust-only install check after cleanup: `cargo install --path . --locked --offline --root /tmp/rust_realease_install --target-dir target` succeeded, and the installed binary reported version `0.1.0`. Formatting, Clippy, and all 26 Rust tests passed.
+
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep live release gates open until a disposable Gitea token is provided. The old Python baseline had 45 passing tests and two opt-in tests skipped before removal. CI runs Cargo tests only; Cross and live Gitea tests are separate checks. Next work: real disposable release, public download, and isolated cargo-binstall validation.
 
 Parity note: Python and Rust `target_test_project --dry-run --stop-after verify` both report the missing local release tag and exit nonzero. The Rust dry run now reports this as a prerequisite without creating a tag. Python and Rust metadata-stage runs both succeed on the fixture. Output formatting differs; full fixture parity remains open.
 
-Run the repeatable local smoke comparison with `.venv/bin/python tests/parity_smoke.py`. It builds the Rust binary and compares inspect/metadata fields on the tiny fixture; when the fixture tag is absent, it also checks that both dry runs reject it. Disposable fixtures also compare selected, ambiguous, and unknown workspace packages, plus library-only and multi-binary errors. The full fixture matrix is still pending.
+The former `tests/parity_smoke.py` comparison passed inspect/metadata fields on the tiny fixture and disposable workspace/package-shape cases before it was removed with the Python worker. Its results are recorded in Git history. Future regression coverage should be added as Rust tests.
+
+Phases 0–15 below preserve the original migration checklist as historical context. Their Python comparison tasks cannot be rerun from the current tree; use Git history if needed. Phase 16 live validation and remaining Rust quality gates are current work.
 
 Work in small, testable phases. Commit migration work in coherent increments.
 
@@ -28,7 +32,7 @@ Work in small, testable phases. Commit migration work in coherent increments.
 
 ## Migration rules
 
-- [ ] Do not delete the Python implementation before Rust parity is proven.
+- [x] Superseded by explicit user authorization to remove the Python implementation before live parity validation.
 - [ ] Do not change release semantics merely to simplify the port.
 - [ ] Keep mutation operations opt-in.
 - [ ] Preserve artifact names/layouts and cargo-binstall metadata.
@@ -625,7 +629,7 @@ Verify useful reporting:
 
 ---
 
-## Phase 15 — Build a Python-vs-Rust parity harness
+## Phase 15 — Historical Python-vs-Rust parity harness
 
 Create a migration-only harness/script or test utility.
 
@@ -710,15 +714,15 @@ Use a repository specifically safe for integration testing.
 
 ## Phase 17 — Cut over the entry point
 
-Only after the prior gates pass:
+The user explicitly requested this cutover before live publication validation; keep the live gate open.
 
-- [ ] Make the Rust executable the documented/default tool.
-- [ ] If `release.sh` remains, make it a thin compatibility launcher only.
-- [ ] Remove venv checks from the active workflow.
-- [ ] Remove `requirements.txt` from required setup.
-- [ ] Remove Python package installation from README.
-- [ ] Update examples to invoke the Rust binary.
-- [ ] Update CI/Jenkins to build/test Rust.
+- [x] Make the Rust executable the documented/default tool.
+- [x] Remove `release.sh` at the user's request.
+- [x] Remove venv checks from the active workflow.
+- [x] Remove `requirements.txt` from required setup.
+- [x] Remove Python package installation from README.
+- [x] Update examples to invoke the Rust binary.
+- [x] Update CI/Jenkins to build/test Rust.
 - [ ] Add release/install instructions for this tool itself if desired.
 
 ### Gate
@@ -729,23 +733,23 @@ Only after the prior gates pass:
 
 ## Phase 18 — Remove the Python implementation
 
-Do this last.
+The user explicitly requested this cleanup before live publication validation. The deleted Python reference remains available in Git history.
 
-- [ ] Confirm no README command references Python worker.
-- [ ] Confirm no CI job requires Python worker.
-- [ ] Confirm no fixture/test depends solely on Python code.
+- [x] Confirm no README command references Python worker.
+- [x] Confirm no CI job requires Python worker.
+- [x] Remove Python-only tests with the worker at the user's request.
 - [ ] Preserve useful behavioral tests in Rust.
-- [ ] Delete `worker/`.
-- [ ] Delete Python-only test code.
-- [ ] Delete `requirements.txt`.
-- [ ] Simplify/remove obsolete venv `release.sh` logic.
-- [ ] Remove parity harness if it has no long-term value.
-- [ ] Keep migration rationale in Git history / docs as appropriate.
+- [x] Delete `worker/`.
+- [x] Delete Python-only test code.
+- [x] Delete `requirements.txt`.
+- [x] Remove obsolete venv `release.sh`.
+- [x] Remove the Python parity harness and retain its results in Git history.
+- [x] Keep migration rationale in Git history and this task tracker.
 
 ### Gate
 
-- [ ] `git grep` finds no accidental active Python-runtime dependency.
-- [ ] Rust test suite still passes.
+- [x] README, docs, CI, and source have no active Python-runtime dependency.
+- [x] Rust test suite still passes (26 tests after cleanup).
 
 ---
 
@@ -768,16 +772,16 @@ Check:
 - [ ] no shell interpolation hazards;
 - [ ] archive path safety;
 - [ ] helpful errors;
-- [ ] README reflects reality;
+- [x] README documents the active Rust CLI and its usage;
 - [ ] `AGENTS.md` reflects final architecture;
-- [ ] obsolete migration notes are clearly historical rather than active instructions.
+- [x] obsolete migration instructions have an explicit current-user override in `AGENTS.md` and this tracker.
 
 ---
 
 ## Final definition of done
 
-- [ ] Native Rust CLI replaces Python worker.
-- [ ] No venv is required.
+- [x] Native Rust CLI replaces Python worker as the active entry point.
+- [x] No venv is required.
 - [ ] Existing supported flags/config semantics are preserved.
 - [ ] Workspace `--package` behavior is preserved.
 - [ ] Metadata validation/repair is preserved.

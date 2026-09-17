@@ -100,6 +100,6 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 ```
 
-Jenkins runs Cargo tests only. Cross builds and live Gitea releases are separate release checks. The small `target_test_project` submodule provides a fast target matrix fixture.
+Jenkins runs Cargo tests only. Cross builds and live Gitea releases are separate release checks. The small [target_test_project fixture](https://proxy.dandaedre.com/gitea/idle-org/target_test_project) is maintained in its own repository for fast target matrix experiments. Clone it separately when needed; it is not part of this checkout.
 
 With `cargo-binstall` installed, run the opt-in isolated install fixture for all three targets with `cargo test real_binstall_installs_local_release_fixture -- --ignored`.

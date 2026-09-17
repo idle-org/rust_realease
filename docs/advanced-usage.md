@@ -1,5 +1,16 @@
 # Advanced usage
 
+## Disposable release fixture
+
+The [target_test_project repository](https://proxy.dandaedre.com/gitea/idle-org/target_test_project) is a small standalone Cargo binary for Cross and Gitea integration tests. Clone it separately rather than expecting a submodule in this repository:
+
+```bash
+git clone https://proxy.dandaedre.com/gitea/idle-org/target_test_project.git
+rust_realease ./target_test_project --dry-run
+```
+
+Its public [v0.1.3 release](https://proxy.dandaedre.com/gitea/idle-org/target_test_project/releases/tag/v0.1.3) was used to validate preparation, all three default Cross targets, published checksums, and isolated cargo-binstall installs. Use a new version and tag for future publication tests; release assets with the same names are deliberately treated as collisions.
+
 ## Sources and package selection
 
 `SOURCE` can be a local directory, an HTTP(S) Git URL, an SSH URL, or an SCP-style URL such as `git@host:owner/repo.git`. Remote sources are cloned into a managed checkout. Use `--keep-workdir` to retain that checkout and its artifacts; preparation retains remote checkouts automatically. Local sources are never deleted.

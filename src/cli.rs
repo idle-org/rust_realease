@@ -221,6 +221,17 @@ pub fn run(args: Cli) -> Result<(), Error> {
         && args
             .stop_after
             .is_none_or(|stage| stage.order() >= Stage::Binstall.order());
+    let publication = if publishing {
+        project::validate_checkout_tag(&checkout.root, &tag, &runner)?;
+        let api = Gitea::new(&repository, &config.token_env)?;
+        let private = api.repository_private()?;
+        if private && needs_binstall {
+            return Err(Error("This repository is private; cargo-binstall cannot verify its private release downloads. Rerun with --skip-binstall-test to verify uploaded assets with Gitea authentication.".into()));
+        }
+        Some((api, private))
+    } else {
+        None
+    };
     let (mut problems, engine) = build::prerequisites(
         &checkout.root,
         &config,
@@ -249,18 +260,6 @@ pub fn run(args: Cli) -> Result<(), Error> {
         return Err(Error(
             "Resolve the prerequisite issues above before building.".into(),
         ));
-    }
-    if publishing {
-        project::validate_checkout_tag(&checkout.root, &tag, &runner)?;
-        if std::env::var(&config.token_env)
-            .ok()
-            .is_none_or(|value| value.is_empty())
-        {
-            return Err(Error(format!(
-                "Set {} before publishing.",
-                config.token_env
-            )));
-        }
     }
     build::verify_source(&checkout.root, &selected, &config, args.skip_tests, &runner)?;
     if args.stop_after == Some(Stage::Verify) {
@@ -295,11 +294,8 @@ pub fn run(args: Cli) -> Result<(), Error> {
         return Ok(());
     }
     let commit = project::head_commit(&checkout.root, &runner)?;
-    let api = Gitea::new(&repository, &config.token_env)?;
-    let private = api.repository_private()?;
-    if private && needs_binstall {
-        return Err(Error("This repository is private; cargo-binstall cannot verify its private release downloads. Rerun with --skip-binstall-test to verify uploaded assets with Gitea authentication.".into()));
-    }
+    let (api, private) =
+        publication.ok_or_else(|| Error("Publication client was not initialized.".into()))?;
     let release = api.ensure_release(&tag, &commit, args.draft, args.prerelease)?;
     println!("Release ready: {tag}");
     if args.stop_after == Some(Stage::Release) {

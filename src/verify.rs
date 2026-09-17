@@ -294,18 +294,42 @@ mod tests {
             })
             .collect::<Result<Vec<_>, Error>>()
             .unwrap();
-        let api = crate::gitea::Gitea::new(&repository, "GITEA_TOKEN").unwrap();
-        let private = api.repository_private().unwrap();
+        let private = std::env::var("RUST_RELEASE_LIVE_PRIVATE").as_deref() == Ok("1");
+        let api = private.then(|| crate::gitea::Gitea::new(&repository, "GITEA_TOKEN").unwrap());
         verify_published(
             &repository,
             &tag,
             &artifacts,
             &directory.join("SHA256SUMS"),
-            if private {
-                Some(api.download_client())
-            } else {
-                None
-            },
+            api.as_ref().map(crate::gitea::Gitea::download_client),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires a public disposable release and cargo-binstall"]
+    fn live_binstall_installs_public_release() {
+        let required = |name: &str| std::env::var(name).expect("set live release test variables");
+        let manifest = std::path::PathBuf::from(required("RUST_RELEASE_LIVE_MANIFEST"));
+        let root = manifest.parent().unwrap().to_path_buf();
+        let name = required("RUST_RELEASE_LIVE_NAME");
+        let project = SelectedPackage {
+            name: name.clone(),
+            version: required("RUST_RELEASE_LIVE_VERSION"),
+            binary: name,
+            manifest,
+            repository: Some(required("RUST_RELEASE_LIVE_REPOSITORY")),
+            target_directory: root.join("target"),
+        };
+        verify_binstall(
+            &root,
+            &project,
+            &[
+                "x86_64-unknown-linux-musl".into(),
+                "aarch64-unknown-linux-musl".into(),
+                "x86_64-pc-windows-gnu".into(),
+            ],
+            &Runner::new("GITEA_TOKEN"),
         )
         .unwrap();
     }

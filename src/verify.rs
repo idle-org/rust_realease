@@ -313,6 +313,22 @@ mod tests {
         )
         .unwrap();
         verify_archive(&artifacts[0].path, &artifacts[0]).unwrap();
+        let mut tar = Vec::new();
+        GzDecoder::new(File::open(&artifacts[0].path).unwrap())
+            .read_to_end(&mut tar)
+            .unwrap();
+        tar.extend_from_slice(&[1; 512]);
+        let extra = temp.path().join("extra.tgz");
+        let mut gzip = flate2::write::GzEncoder::new(
+            File::create(&extra).unwrap(),
+            flate2::Compression::default(),
+        );
+        gzip.write_all(&tar).unwrap();
+        gzip.finish().unwrap();
+        assert!(verify_archive(&extra, &artifacts[0])
+            .unwrap_err()
+            .to_string()
+            .contains("unexpected members"));
         let project = SelectedPackage {
             name: "demo".into(),
             version: "0.1.0".into(),

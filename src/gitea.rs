@@ -266,6 +266,12 @@ mod tests {
                     assert!(bytes.len() < 64 * 1024);
                 };
                 let headers = String::from_utf8_lossy(&bytes[..header_end]).to_string();
+                assert!(
+                    headers
+                        .lines()
+                        .any(|line| line.eq_ignore_ascii_case("authorization: token test-token")),
+                    "authenticated Gitea request lacked the configured token"
+                );
                 let first = headers.lines().next().unwrap().to_owned();
                 assert!(
                     first.starts_with(&format!("{} {} ", reply.method, reply.path)),

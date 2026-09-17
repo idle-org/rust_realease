@@ -296,6 +296,10 @@ pub fn run(args: Cli) -> Result<(), Error> {
     }
     let commit = project::head_commit(&checkout.root, &runner)?;
     let api = Gitea::new(&repository, &config.token_env)?;
+    let private = api.repository_private()?;
+    if private && needs_binstall {
+        return Err(Error("This repository is private; cargo-binstall cannot verify its private release downloads. Rerun with --skip-binstall-test to verify uploaded assets with Gitea authentication.".into()));
+    }
     let release = api.ensure_release(&tag, &commit, args.draft, args.prerelease)?;
     println!("Release ready: {tag}");
     if args.stop_after == Some(Stage::Release) {
@@ -310,7 +314,17 @@ pub fn run(args: Cli) -> Result<(), Error> {
     if release.draft {
         return Err(Error("Draft uploaded. Public verification requires publishing the draft; use --stop-after upload for draft workflows.".into()));
     }
-    verify::verify_published(&repository, &tag, &artifacts, &sums)?;
+    verify::verify_published(
+        &repository,
+        &tag,
+        &artifacts,
+        &sums,
+        if private {
+            Some(api.download_client())
+        } else {
+            None
+        },
+    )?;
     if !args.skip_binstall_test {
         verify::verify_binstall(&checkout.root, &selected, &config.targets, &runner)?;
     }

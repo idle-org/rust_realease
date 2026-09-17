@@ -14,11 +14,13 @@ The user explicitly requested removal of the Python implementation and its launc
 - Defer live API release tests until a disposable token is provided.
 - Use the small `target_test_project` submodule for fast build and cross-target experiments.
 
-Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, and isolated cargo-binstall orchestration are implemented. Gitea paths pass local HTTP mock tests; live publication and real cargo-binstall installation still need a disposable token. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The tiny fixture built and packaged all three default targets locally. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
+Current Rust milestone: inspection, metadata, preparation, host verification, Cross build, packaging, Gitea publication, anonymous downloads, authenticated private downloads, and isolated cargo-binstall orchestration are implemented. The disposable private `target_test_project` release was created with all three target archives and SHA256SUMS; an opt-in live test verified their authenticated downloads, checksums, and layouts. Public anonymous download and real cargo-binstall installation still need a public disposable release. Preparation has disposable Git tests for dry-run, commit, tag safety, destination refusal, and an atomic branch/tag push to a local bare remote. The tiny fixture built and packaged all three default targets locally. The Python worker, its tests, `release.sh`, and `requirements.txt` were removed at the user's request.
+
+The opt-in real `cargo-binstall` integration fixture installs all three archive contracts from a temporary local HTTP server into isolated directories. Its test-only invocation permits HTTP; production verification continues to require HTTPS. The private live Gitea release does not allow cargo-binstall downloads, even with `GITEA_TOKEN` set.
 
 Rust-only install check after cleanup: `cargo install --path . --locked --offline --root /tmp/rust_realease_install --target-dir target` succeeded, and the installed binary reported version `0.1.0`. Formatting, Clippy, and all 26 Rust tests passed.
 
-Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep live release gates open until a disposable Gitea token is provided. The old Python baseline had 45 passing tests and two opt-in tests skipped before removal. CI runs Cargo tests only; Cross and live Gitea tests are separate checks. Next work: real disposable release, public download, and isolated cargo-binstall validation.
+Progress tracking: check a task only when the Rust behavior is implemented and locally verified. Keep public release and cargo-binstall gates open until a public disposable repository is available. The old Python baseline had 45 passing tests and two opt-in tests skipped before removal. CI runs Cargo tests only; Cross and live Gitea tests are separate checks.
 
 Parity note: Python and Rust `target_test_project --dry-run --stop-after verify` both report the missing local release tag and exit nonzero. The Rust dry run now reports this as a prerequisite without creating a tag. Python and Rust metadata-stage runs both succeed on the fixture. Output formatting differs; full fixture parity remains open.
 
@@ -572,8 +574,8 @@ Test-only as useful:
 ### Tests
 
 - [x] Local/mock HTTP asset server integration.
-- [ ] Real cargo-binstall integration fixture.
-- [ ] Check all three default target artifact layouts.
+- [x] Real cargo-binstall integration fixture (local HTTP, opt-in).
+- [x] Check all three default target artifact layouts.
 
 ### Gate
 
@@ -691,20 +693,21 @@ Use a repository specifically safe for integration testing.
 
 ### Publication
 
-- [ ] Matching remote tag is validated.
-- [ ] Release is created or reused.
-- [ ] All assets upload.
+- [x] Matching remote tag is validated.
+- [x] Release is created or reused (creation verified on private fixture).
+- [x] All assets upload.
 - [ ] Anonymous downloads work.
-- [ ] Checksums/layouts verify.
+- [x] Authenticated private downloads work.
+- [x] Checksums/layouts verify for the private fixture.
 - [ ] cargo-binstall installs from the live release into a temporary location.
 
 ### Safety
 
-- [ ] No unrelated repo files modified.
-- [ ] No unrelated release assets touched.
-- [ ] No token appears in logs.
-- [ ] No force push.
-- [ ] No tag movement.
+- [x] No unrelated repo files modified in the disposable fixture.
+- [x] No unrelated release assets touched in the new release.
+- [x] No token appears in logs from this live run.
+- [x] No force push.
+- [x] No tag movement.
 
 ### Gate
 

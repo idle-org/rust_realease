@@ -53,9 +53,9 @@ For repositories whose build scripts need a selected Rust toolchain inside Cross
 
 ## Pipeline stages
 
-`--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. Release builds use fresh target directories to avoid stale build-script output. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for each target. `--skip-binstall-test` skips that install check, while retaining download verification.
+`--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. Release builds use fresh target directories to avoid stale build-script output. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously for public repositories or with Gitea authentication for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for public targets. `--skip-binstall-test` skips that install check, while retaining download verification.
 
-`--draft --stop-after upload` is useful when a release must stay private for review. Full verification needs public downloads. `--prerelease` and `--draft` set properties when a release is created; reusing a release preserves its existing settings. Asset replacement is not transactional: if an upload fails after a matching asset is deleted, retry the publication explicitly.
+`--draft --stop-after upload` is useful when a release must stay private for review. Private repositories require `--skip-binstall-test`; cargo-binstall cannot fetch their attachment URLs, even when `GITEA_TOKEN` is set. `--prerelease` and `--draft` set properties when a release is created; reusing a release preserves its existing settings. Asset replacement is not transactional: if an upload fails after a matching asset is deleted, retry the publication explicitly.
 
 ## Artifact contract
 
@@ -73,7 +73,7 @@ Windows archives contain `my-tool.exe`. `SHA256SUMS` lists the final archive che
 
 Authenticated Gitea API publication requires HTTPS. The token comes from the configured environment variable, never from a positional argument or URL. Child Cargo and Cross processes do not receive it. An HTTPS preparation push to the matching release repository can use the token through a temporary askpass helper; SSH pushes use normal Git credentials. Grant the token account code read and release write access, plus code write when using `--push-preparation`.
 
-Normal publication does not create a commit, tag, or push. Existing asset names cause an error unless `--replace-assets` is set; unrelated assets are not deleted. Draft or private assets cannot pass anonymous verification.
+Normal publication does not create a commit, tag, or push. Existing asset names cause an error unless `--replace-assets` is set; unrelated assets are not deleted. Private assets are verified with authenticated downloads and do not establish public installability.
 
 ## Troubleshooting
 
@@ -81,7 +81,7 @@ Normal publication does not create a commit, tag, or push. Existing asset names 
 - **Missing Cargo.lock:** run preparation or use `--unlocked` when unlocked resolution is intentional.
 - **Container unavailable:** start Docker or Podman. `CROSS_CONTAINER_ENGINE` can select `docker` or `podman`.
 - **Cross image or native library failure:** configure an appropriate Cross image and target libraries in the project. The publisher does not substitute an MSVC target or hide linker failures.
-- **Private release verification failure:** publish the release before the final verification stage, or stop at `upload` for a draft workflow.
+- **Private release installation:** pass `--skip-binstall-test` to verify the uploaded assets with Gitea authentication. Use a public disposable release to test real cargo-binstall installation.
 - **Asset collision:** inspect the existing release; use `--replace-assets` only when replacement is intended.
 
 `cargo-binstall` verification installs into temporary directories and does not run foreign-target binaries. Plain registry based `cargo binstall my-tool` additionally requires a published crate with the release metadata; this tool does not publish crates.

@@ -1,6 +1,6 @@
 # rust_realease
 
-`rust_realease` builds and publishes one binary from a Rust package to a Gitea release. Give it a local project directory or a Git URL. It inspects Cargo metadata, checks the version tag, builds the selected targets with Cross, creates `.tgz` archives and `SHA256SUMS`, uploads them, and verifies the public downloads. It can also prepare a project for release with explicit commit, tag, and push options.
+`rust_realease` builds and publishes one binary from a Rust package to a Gitea release. Give it a local project directory or a Git URL. It inspects Cargo metadata, checks the version tag, builds the selected targets with Cross, creates `.tgz` archives and `SHA256SUMS`, uploads them, and verifies release downloads. It can also prepare a project for release with explicit commit, tag, and push options.
 
 ## Install
 
@@ -86,7 +86,7 @@ For a remote repository, select the exact tag to check out:
 rust_realease https://gitea.example.org/owner/my-tool.git --tag v0.1.0
 ```
 
-The token account needs repository read access and release write access. `--push-preparation` additionally needs code write access. The token is read from `GITEA_TOKEN` by default and is kept out of child build processes. Published assets must be publicly downloadable for the final anonymous download and `cargo-binstall` checks. An existing asset with the same name stops the upload; `--replace-assets` explicitly permits replacing matching assets.
+The token account needs repository read access and release write access. `--push-preparation` additionally needs code write access. The token is read from `GITEA_TOKEN` by default and is kept out of child build processes. Public releases are verified by anonymous downloads. Private releases are downloaded with Gitea authentication; use `--skip-binstall-test` for them because cargo-binstall cannot install from their private attachment URLs. An existing asset with the same name stops the upload; `--replace-assets` explicitly permits replacing matching assets.
 
 ## More options
 
@@ -101,3 +101,5 @@ cargo test --all
 ```
 
 Jenkins runs Cargo tests only. Cross builds and live Gitea releases are separate release checks. The small `target_test_project` submodule provides a fast target matrix fixture.
+
+With `cargo-binstall` installed, run the opt-in isolated install fixture for all three targets with `cargo test real_binstall_installs_local_release_fixture -- --ignored`.

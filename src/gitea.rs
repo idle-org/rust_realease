@@ -149,6 +149,16 @@ impl Gitea {
             .map_err(|_| Error("Gitea release response is missing id or draft state.".into()))
     }
 
+    pub fn repository_private(&self) -> Result<bool, Error> {
+        self.request(Method::GET, "", None, false)?
+            .and_then(|repository| repository.get("private").and_then(Value::as_bool))
+            .ok_or_else(|| Error("Gitea repository response is missing visibility.".into()))
+    }
+
+    pub fn download_client(&self) -> &Client {
+        &self.client
+    }
+
     fn assets(&self, release_id: u64) -> Result<Vec<Asset>, Error> {
         let response = self
             .request(
@@ -444,6 +454,19 @@ mod tests {
             assert!(error.contains(expected), "{error}");
             assert_eq!(handle.join().unwrap().len(), 1);
         }
+    }
+
+    #[test]
+    fn reads_repository_visibility_before_private_verification() {
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/api/v1/repos/team/demo",
+            status: 200,
+            body: r#"{"private":true}"#,
+        }]);
+        let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+        assert!(api.repository_private().unwrap());
+        assert_eq!(handle.join().unwrap().len(), 1);
     }
 
     #[test]

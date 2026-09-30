@@ -66,6 +66,7 @@ pub fn plan(
     let changes = manifest::changes(
         &project.manifest,
         repository,
+        project.repository.as_deref(),
         &config.tag_prefix,
         config.package_format.archives(),
     )?;
@@ -76,7 +77,7 @@ pub fn plan(
     let mut ignore_new = ignore_old.clone();
     let missing: Vec<_> = ["/dist/", "/target/", "!/Cargo.lock"]
         .into_iter()
-        .filter(|entry| !ignore_old.lines().any(|line| line == *entry))
+        .filter(|entry| !has_equivalent_ignore(&ignore_old, entry))
         .collect();
     if !missing.is_empty() {
         ignore_new = format!(
@@ -142,6 +143,17 @@ pub fn plan(
     Ok(Plan {
         files,
         generate_lock: !lock.exists(),
+    })
+}
+
+fn has_equivalent_ignore(contents: &str, desired: &str) -> bool {
+    contents.lines().any(|line| {
+        let line = line.trim();
+        match desired {
+            "/target/" => matches!(line, "/target/" | "/target" | "target/" | "target"),
+            "/dist/" => matches!(line, "/dist/" | "/dist" | "dist/" | "dist"),
+            _ => line == desired,
+        }
     })
 }
 
@@ -430,6 +442,52 @@ fn push_preparation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_resolved_workspace_repository_and_existing_target_ignore() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("src/bin")).unwrap();
+        for binary in ["john-slop", "john-slop-fmt", "john-slop-lsp"] {
+            fs::write(root.join(format!("src/bin/{binary}.rs")), "fn main() {}\n").unwrap();
+        }
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver='3'\n[workspace.package]\nversion='0.1.27'\nedition='2024'\nrepository='https://git.example.com/idle-org/john_slop'\n[package]\nname='john_slop'\nversion.workspace=true\nedition.workspace=true\nrepository.workspace=true\nautobins=false\n[[bin]]\nname='john-slop'\npath='src/bin/john-slop.rs'\n[[bin]]\nname='john-slop-fmt'\npath='src/bin/john-slop-fmt.rs'\n[[bin]]\nname='john-slop-lsp'\npath='src/bin/john-slop-lsp.rs'\n",
+        )
+        .unwrap();
+        fs::write(root.join(".gitignore"), "target/\n/dist/\n!/Cargo.lock\n").unwrap();
+        let runner = Runner::new("GITEA_TOKEN");
+        let project = project::inspect(root.to_str().unwrap(), None, &runner).unwrap();
+        let config = Config {
+            targets: vec!["x86_64-unknown-linux-musl".into()],
+            profile: "release".into(),
+            locked: true,
+            tag_prefix: "v".into(),
+            token_env: "GITEA_TOKEN".into(),
+            package_format: crate::config::PackageFormat::Tgz,
+        };
+
+        let plan = plan(
+            root,
+            &project,
+            &config,
+            "https://git.example.com/idle-org/john_slop",
+            None,
+        )
+        .unwrap();
+        let manifest = plan
+            .files
+            .iter()
+            .find(|file| file.path == root.join("Cargo.toml"))
+            .unwrap();
+
+        assert!(manifest.new.contains("repository.workspace=true"));
+        assert!(!plan
+            .files
+            .iter()
+            .any(|file| file.path == root.join(".gitignore")));
+    }
 
     fn fixture() -> (tempfile::TempDir, SelectedPackage, Config, Runner) {
         let temp = tempfile::tempdir().unwrap();

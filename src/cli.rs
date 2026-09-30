@@ -171,6 +171,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
     let issues = manifest::changes(
         &selected.manifest,
         &repository,
+        selected.repository.as_deref(),
         &config.tag_prefix,
         config.package_format.archives(),
     )?;

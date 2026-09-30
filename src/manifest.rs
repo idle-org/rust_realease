@@ -1,4 +1,4 @@
-use crate::{error::Error, policy};
+use crate::{error::Error, policy, project};
 use std::{fs, path::Path};
 use toml_edit::{DocumentMut, Item, Table, Value};
 
@@ -42,6 +42,7 @@ fn binstall(package: &Table) -> Result<Option<&Table>, Error> {
 pub fn changes(
     path: &Path,
     repository: &str,
+    resolved_repository: Option<&str>,
     prefix: &str,
     require_binstall: bool,
 ) -> Result<Vec<Change>, Error> {
@@ -52,7 +53,13 @@ pub fn changes(
         .get("repository")
         .and_then(Item::as_str)
         .map(str::to_owned);
-    if actual.as_deref() != Some(repository) {
+    let inherited_and_resolved = package
+        .get("repository")
+        .is_some_and(inherits_from_workspace)
+        && resolved_repository.is_some_and(|resolved| {
+            project::normalize_repository(resolved).is_ok_and(|value| value == repository)
+        });
+    if actual.as_deref() != Some(repository) && !inherited_and_resolved {
         result.push(Change {
             key: "package.repository".into(),
             actual,
@@ -89,6 +96,16 @@ pub fn changes(
         }
     }
     Ok(result)
+}
+
+fn inherits_from_workspace(item: &Item) -> bool {
+    if let Some(table) = item.as_table() {
+        return table.get("workspace").and_then(Item::as_bool) == Some(true);
+    }
+    item.as_inline_table()
+        .and_then(|table| table.get("workspace"))
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 pub fn repair(path: &Path, changes: &[Change], write: bool) -> Result<String, Error> {
@@ -152,7 +169,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Cargo.toml");
         fs::write(&path, "# keep this comment\n[package]\nname = 'demo'\nversion = '0.1.0'\nrepository = 'https://old.example/x/y' # keep inline\n[package.metadata.binstall]\npkg-fmt = 'zip'\ncustom = 'bad'\n").unwrap();
-        let issues = changes(&path, "https://example.com/x/y", "release-", true).unwrap();
+        let issues = changes(&path, "https://example.com/x/y", None, "release-", true).unwrap();
         assert_eq!(issues.len(), 5);
         let before = fs::read_to_string(&path).unwrap();
         let preview = repair(&path, &issues, false).unwrap();
@@ -160,9 +177,11 @@ mod tests {
         assert!(preview.contains("# keep this comment"));
         assert!(preview.contains("# keep inline"));
         repair(&path, &issues, true).unwrap();
-        assert!(changes(&path, "https://example.com/x/y", "release-", true)
-            .unwrap()
-            .is_empty());
+        assert!(
+            changes(&path, "https://example.com/x/y", None, "release-", true)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             repair(&path, &[], true).unwrap(),
             fs::read_to_string(&path).unwrap()
@@ -173,11 +192,59 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Cargo.toml");
         fs::write(&path, "[package]\nname='demo'\nmetadata='oops'\n").unwrap();
-        assert!(changes(&path, "https://example.com/x/y", "v", true)
+        assert!(changes(&path, "https://example.com/x/y", None, "v", true)
             .unwrap_err()
             .to_string()
             .contains("package.metadata must be a table"));
-        let issues = changes(&path, "https://example.com/x/y", "v", false).unwrap();
+        let issues = changes(&path, "https://example.com/x/y", None, "v", false).unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].key, "package.repository");
+    }
+
+    #[test]
+    fn accepts_repository_inherited_from_matching_workspace_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Cargo.toml");
+        fs::write(
+            &path,
+            "[package]\nname='demo'\nversion='0.1.0'\nrepository.workspace=true\n",
+        )
+        .unwrap();
+
+        let issues = changes(
+            &path,
+            "https://example.com/owner/demo",
+            Some("https://example.com/owner/demo.git"),
+            "v",
+            false,
+        )
+        .unwrap();
+
+        assert!(issues.is_empty());
+        assert!(fs::read_to_string(path)
+            .unwrap()
+            .contains("repository.workspace=true"));
+    }
+
+    #[test]
+    fn repairs_inherited_repository_when_resolved_value_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Cargo.toml");
+        fs::write(
+            &path,
+            "[package]\nname='demo'\nversion='0.1.0'\nrepository.workspace=true\n",
+        )
+        .unwrap();
+
+        let issues = changes(
+            &path,
+            "https://example.com/owner/demo",
+            Some("https://example.com/owner/other"),
+            "v",
+            false,
+        )
+        .unwrap();
+
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].key, "package.repository");
     }

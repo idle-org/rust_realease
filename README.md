@@ -102,6 +102,16 @@ export GITEA_TOKEN
 rust_realease ./my-tool
 ```
 
+To publish `rust_realease` itself, install the current publisher and use the
+repository wrapper. It reads the token from a file without placing it in the
+process arguments and publishes both archive and standalone-binary assets:
+
+```bash
+cargo install --path . --locked
+./release.sh ../gitea_token.txt --dry-run
+./release.sh ../gitea_token.txt
+```
+
 For a remote repository, select the exact tag to check out:
 
 ```bash

@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "rust_realease"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "directories",

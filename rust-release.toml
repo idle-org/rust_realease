@@ -1,0 +1,3 @@
+[[repository.fallbacks]]
+origin = "git@git.dandaedre.com:idle-org/rust_realease.git"
+fallback-url = "https://proxy.dandaedre.com/gitea/idle-org/rust_realease"

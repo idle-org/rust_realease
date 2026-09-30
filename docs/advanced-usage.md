@@ -15,7 +15,7 @@ Its public [v0.1.3 release](https://proxy.dandaedre.com/gitea/idle-org/target_te
 
 `SOURCE` can be a local directory, an HTTP(S) Git URL, an SSH URL, or an SCP-style URL such as `git@host:owner/repo.git`. Remote sources are cloned into a managed checkout. Use `--keep-workdir` to retain that checkout and its artifacts; preparation retains remote checkouts automatically. Local sources are never deleted.
 
-Use `--package NAME` to select one workspace member by its exact Cargo package name. Selection uses `cargo metadata` and accepts inherited workspace version and repository values. Library-only packages and members with multiple binaries cannot be released. Checks, tests, and builds are scoped to the selected package.
+Use `--package NAME` to select one workspace member by its exact Cargo package name. Selection uses `cargo metadata` and accepts inherited workspace version and repository values. Library-only packages cannot be released. Every binary target declared by the selected package is built and packaged; this includes binaries with `required-features` when those features are enabled by the package's defaults. Checks, tests, and builds are scoped to the selected package.
 
 `--repository-url https://host/owner/repo` selects the release destination when Cargo metadata or Git origin needs an explicit web URL. Materially conflicting origin and release destinations are refused. Repository URLs with embedded credentials are refused.
 
@@ -45,9 +45,11 @@ token-env = "GITEA_TOKEN"
 
 Use `--tag-prefix ""` for an unprefixed tag such as `0.3.1`. `--tag TAG` must match the selected package version and configured prefix. `--unlocked` permits builds without the usual locked dependency resolution; the default uses `--locked`.
 
+`package.format` accepts `"tgz"`, `"binary"`, or `"both"`. The default `"tgz"` produces cargo-binstall archives. `"binary"` produces only directly downloadable executables and does not require or verify cargo-binstall metadata. `"both"` produces both forms. The `--artifact-format` option overrides this setting for an individual run.
+
 ## Metadata and preparation
 
-The publisher checks the selected member's repository and cargo-binstall metadata. `--fix-metadata` repairs supported entries in that member's `Cargo.toml` while preserving comments where practical. It does not commit, tag, or push. To preview the full preparation diff, use `--prepare-repo --dry-run`.
+The publisher checks the selected member's repository and, when archives are enabled, its cargo-binstall metadata. `--fix-metadata` repairs supported entries in that member's `Cargo.toml` while preserving comments where practical. It does not commit, tag, or push. To preview the full preparation diff, use `--prepare-repo --dry-run`.
 
 The required binstall contract is:
 
@@ -70,15 +72,16 @@ For repositories whose build scripts need a selected Rust toolchain inside Cross
 
 ## Artifact contract
 
-Each archive is named `{name}-{target}-v{version}.tgz` and contains exactly one root directory with one binary:
+Each archive is named `{name}-{target}-v{version}.tgz` and contains exactly one root directory with every binary declared by the selected package:
 
 ```text
 my-tool-x86_64-unknown-linux-musl-v0.1.0.tgz
 └── my-tool-x86_64-unknown-linux-musl-v0.1.0/
-    └── my-tool
+    ├── my-tool
+    └── my-tool-helper
 ```
 
-Windows archives contain `my-tool.exe`. `SHA256SUMS` lists the final archive checksums. Archive ownership and timestamps are normalized; identical binary bytes and modes produce identical archives. Separate builds can still produce different binaries.
+Windows archive members have an `.exe` suffix. Raw assets are target-qualified to remain unambiguous, for example `my-tool-x86_64-unknown-linux-musl-v0.1.0` and `my-tool-x86_64-pc-windows-gnu-v0.1.0.exe`. `SHA256SUMS` lists every generated asset. Archive ownership and timestamps are normalized; identical binary bytes and modes produce identical archives. Separate builds can still produce different binaries.
 
 ## Authentication and security
 

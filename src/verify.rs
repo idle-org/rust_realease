@@ -1,6 +1,6 @@
 use crate::{
     error::Error,
-    package::{self, Artifact},
+    package::{self, Artifact, ArtifactContents},
     policy,
     project::SelectedPackage,
     runner::Runner,
@@ -25,6 +25,9 @@ pub fn asset_url(repository: &str, tag: &str, filename: &str) -> String {
 }
 
 pub fn verify_archive(path: &Path, artifact: &Artifact) -> Result<(), Error> {
+    let ArtifactContents::Archive { root, binaries } = &artifact.contents else {
+        return Err(Error(format!("{} is not an archive.", path.display())));
+    };
     let mut tar = Vec::new();
     let file =
         File::open(path).map_err(|e| Error(format!("cannot open {}: {e}", path.display())))?;
@@ -36,44 +39,52 @@ pub fn verify_archive(path: &Path, artifact: &Artifact) -> Result<(), Error> {
     }
     let directory = &tar[..512];
     let first = member_name(directory)?;
-    if first != artifact.root || directory[156] != b'5' {
+    if first != *root || directory[156] != b'5' {
         return Err(Error(format!(
             "{}: archive root does not match binstall metadata.",
             path.display()
         )));
     }
-    let binary = &tar[512..1024];
-    let second = member_name(binary)?;
-    if second != format!("{}/{}", artifact.root, artifact.binary) || binary[156] != b'0' {
-        return Err(Error(format!(
-            "{}: archive binary does not match binstall metadata.",
-            path.display()
-        )));
+    let mut offset = 512_usize;
+    for expected in binaries {
+        let header_end = offset
+            .checked_add(512)
+            .ok_or_else(|| Error("Archive size overflow.".into()))?;
+        if header_end > tar.len() {
+            return Err(Error(format!(
+                "{}: truncated binary header.",
+                path.display()
+            )));
+        }
+        let header = &tar[offset..header_end];
+        if member_name(header)? != format!("{root}/{expected}") || header[156] != b'0' {
+            return Err(Error(format!(
+                "{}: archive binary does not match binstall metadata.",
+                path.display()
+            )));
+        }
+        let mode = octal(&header[100..108])?;
+        if !artifact.target.split('-').any(|part| part == "windows") && mode & 0o111 == 0 {
+            return Err(Error(format!(
+                "{}: binary is not executable.",
+                path.display()
+            )));
+        }
+        let size = usize::try_from(octal(&header[124..136])?)
+            .map_err(|_| Error("Archive size overflow.".into()))?;
+        let rounded = size
+            .checked_add(511)
+            .ok_or_else(|| Error("Archive size overflow.".into()))?
+            / 512
+            * 512;
+        offset = header_end
+            .checked_add(rounded)
+            .ok_or_else(|| Error("Archive size overflow.".into()))?;
     }
-    let mode = octal(&binary[100..108])?;
-    if !artifact.target.split('-').any(|part| part == "windows") && mode & 0o111 == 0 {
-        return Err(Error(format!(
-            "{}: binary is not executable.",
-            path.display()
-        )));
-    }
-    let size = octal(&binary[124..136])?;
-    let rounded = size
-        .checked_add(511)
-        .ok_or_else(|| Error("Archive size overflow.".into()))?
-        / 512
-        * 512;
-    let end = 1024_u64
-        .checked_add(rounded)
-        .and_then(|n| n.checked_add(1024))
+    let end = offset
+        .checked_add(1024)
         .ok_or_else(|| Error("Archive size overflow.".into()))?;
-    if end > tar.len() as u64 {
-        return Err(Error(format!(
-            "{}: truncated binary or tar footer.",
-            path.display()
-        )));
-    }
-    if tar[(end - 1024) as usize..].iter().any(|b| *b != 0) {
+    if end > tar.len() || tar[offset..].iter().any(|b| *b != 0) {
         return Err(Error(format!(
             "{}: archive contains unexpected members.",
             path.display()
@@ -187,8 +198,15 @@ pub fn verify_published(
             )));
         }
         if let Some(artifact) = artifacts.iter().find(|a| a.path == local) {
-            verify_archive(&path, artifact)?;
-            println!("Verified URL, checksum and archive: {}", artifact.target);
+            match &artifact.contents {
+                ArtifactContents::Archive { .. } => {
+                    verify_archive(&path, artifact)?;
+                    println!("Verified URL, checksum and archive: {}", artifact.target);
+                }
+                ArtifactContents::Binary => {
+                    println!("Verified URL and checksum: {}", filename);
+                }
+            }
         }
     }
     println!("Verified published SHA256SUMS");
@@ -252,11 +270,13 @@ fn verify_binstall_with_options(
             .to_str()
             .ok_or_else(|| Error("Cargo home path is not UTF-8.".into()))?;
         runner.output_with("cargo", &borrowed, root, &[("CARGO_HOME", cargo_home)], &[])?;
-        let binary = install.join(policy::binary_filename(&project.binary, target));
-        if !binary.is_file() {
-            return Err(Error(format!(
-                "cargo-binstall did not install the expected binary for {target}."
-            )));
+        for name in &project.binaries {
+            let binary = install.join(policy::binary_filename(name, target));
+            if !binary.is_file() {
+                return Err(Error(format!(
+                    "cargo-binstall did not install {name:?} for {target}."
+                )));
+            }
         }
         println!("cargo-binstall installation verified: {target}");
     }
@@ -266,6 +286,14 @@ fn verify_binstall_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{build::TargetOutputs, config::PackageFormat};
+
+    fn outputs(target: &str, binary: std::path::PathBuf) -> Vec<TargetOutputs> {
+        vec![TargetOutputs {
+            target: target.into(),
+            binaries: vec![("demo".into(), binary)],
+        }]
+    }
     #[test]
     #[ignore = "requires RUST_RELEASE_LIVE_* variables and a disposable Gitea release"]
     fn live_release_downloads_match_local_artifacts() {
@@ -288,8 +316,10 @@ mod tests {
                     target: (*target).into(),
                     sha256: package::checksum(&path)?,
                     path,
-                    root: policy::archive_root(&name, target, &version),
-                    binary: policy::binary_filename(&name, target),
+                    contents: ArtifactContents::Archive {
+                        root: policy::archive_root(&name, target, &version),
+                        binaries: vec![policy::binary_filename(&name, target)],
+                    },
                 })
             })
             .collect::<Result<Vec<_>, Error>>()
@@ -316,7 +346,7 @@ mod tests {
         let project = SelectedPackage {
             name: name.clone(),
             version: required("RUST_RELEASE_LIVE_VERSION"),
-            binary: name,
+            binaries: vec![name],
             manifest,
             repository: Some(required("RUST_RELEASE_LIVE_REPOSITORY")),
             target_directory: root.join("target"),
@@ -344,8 +374,8 @@ mod tests {
             temp.path(),
             "demo",
             "0.1.0",
-            "demo",
-            &[("x86_64-unknown-linux-musl".into(), binary)],
+            &outputs("x86_64-unknown-linux-musl", binary),
+            PackageFormat::Tgz,
         )
         .unwrap();
         let filename = artifacts[0]
@@ -394,8 +424,8 @@ mod tests {
             temp.path(),
             "demo",
             "0.1.0",
-            "demo",
-            &[("x86_64-unknown-linux-musl".into(), binary)],
+            &outputs("x86_64-unknown-linux-musl", binary),
+            PackageFormat::Tgz,
         )
         .unwrap();
         let bodies = [
@@ -459,12 +489,15 @@ mod tests {
             .map(|target| {
                 let binary = temp.path().join(format!("binary-{target}"));
                 fs::write(&binary, format!("fixture binary for {target}"))?;
-                Ok((target.clone(), binary))
+                Ok(TargetOutputs {
+                    target: target.clone(),
+                    binaries: vec![("demo".into(), binary)],
+                })
             })
             .collect::<Result<Vec<_>, std::io::Error>>()
             .unwrap();
         let (artifacts, _) =
-            package::package(temp.path(), "demo", "0.1.0", "demo", &outputs).unwrap();
+            package::package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Tgz).unwrap();
         let archives = artifacts
             .iter()
             .map(|artifact| {
@@ -526,7 +559,7 @@ mod tests {
         let project = SelectedPackage {
             name: "demo".into(),
             version: "0.1.0".into(),
-            binary: "demo".into(),
+            binaries: vec!["demo".into()],
             manifest,
             repository: Some(repository),
             target_directory: temp.path().join("target"),
@@ -552,8 +585,8 @@ mod tests {
             temp.path(),
             "demo",
             "0.1.0",
-            "demo",
-            &[("x86_64-unknown-linux-musl".into(), binary)],
+            &outputs("x86_64-unknown-linux-musl", binary),
+            PackageFormat::Tgz,
         )
         .unwrap();
         verify_archive(&artifacts[0].path, &artifacts[0]).unwrap();
@@ -576,7 +609,7 @@ mod tests {
         let project = SelectedPackage {
             name: "demo".into(),
             version: "0.1.0".into(),
-            binary: "demo".into(),
+            binaries: vec!["demo".into()],
             manifest: temp.path().join("Cargo.toml"),
             repository: None,
             target_directory: temp.path().join("target"),

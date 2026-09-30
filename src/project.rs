@@ -9,7 +9,7 @@ use std::{
 pub struct SelectedPackage {
     pub name: String,
     pub version: String,
-    pub binary: String,
+    pub binaries: Vec<String>,
     pub manifest: PathBuf,
     pub repository: Option<String>,
     pub target_directory: PathBuf,
@@ -174,9 +174,9 @@ pub fn inspect(
         .iter()
         .filter(|t| t.kind.iter().any(|kind| kind == "bin"))
         .collect();
-    if binaries.len() != 1 {
+    if binaries.is_empty() {
         return Err(Error(format!(
-            "Package {:?} must have exactly one binary; discovered: {}",
+            "Package {:?} must have at least one binary; discovered: {}",
             selected.name,
             binaries
                 .iter()
@@ -185,7 +185,10 @@ pub fn inspect(
                 .join(", ")
         )));
     }
-    for value in [&selected.name, &selected.version, &binaries[0].name] {
+    for value in std::iter::once(&selected.name)
+        .chain(std::iter::once(&selected.version))
+        .chain(binaries.iter().map(|binary| &binary.name))
+    {
         if !safe_component(value) {
             return Err(Error("Unsafe package, version or binary filename.".into()));
         }
@@ -219,7 +222,7 @@ pub fn inspect(
     Ok(SelectedPackage {
         name: selected.name,
         version: selected.version,
-        binary: binaries[0].name.clone(),
+        binaries: binaries.iter().map(|binary| binary.name.clone()).collect(),
         manifest: member_manifest,
         repository: selected.repository,
         target_directory: metadata.target_directory,
@@ -370,7 +373,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(selected.name, "solo");
-        assert_eq!(selected.binary, "solo");
+        assert_eq!(selected.binaries, ["solo"]);
 
         let workspace = tempfile::tempdir().unwrap();
         write(
@@ -402,13 +405,13 @@ mod tests {
         assert_eq!(
             inspect(root, Some("two"), &Runner::new("GITEA_TOKEN"))
                 .unwrap()
-                .binary,
-            "two"
+                .binaries,
+            ["two"]
         );
     }
 
     #[test]
-    fn rejects_library_and_multiple_binaries() {
+    fn rejects_library_and_accepts_multiple_binaries() {
         let temp = tempfile::tempdir().unwrap();
         write(
             temp.path(),
@@ -420,13 +423,15 @@ mod tests {
         assert!(inspect(root, None, &Runner::new("GITEA_TOKEN"))
             .unwrap_err()
             .to_string()
-            .contains("exactly one binary"));
+            .contains("at least one binary"));
         write(temp.path(), "src/main.rs", "fn main() {}\n");
         write(temp.path(), "src/bin/extra.rs", "fn main() {}\n");
-        assert!(inspect(root, None, &Runner::new("GITEA_TOKEN"))
-            .unwrap_err()
-            .to_string()
-            .contains("exactly one binary"));
+        assert_eq!(
+            inspect(root, None, &Runner::new("GITEA_TOKEN"))
+                .unwrap()
+                .binaries,
+            ["demo", "extra"]
+        );
     }
 
     #[test]

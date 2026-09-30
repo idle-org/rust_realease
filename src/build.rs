@@ -4,6 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug)]
+pub struct TargetOutputs {
+    pub target: String,
+    pub binaries: Vec<(String, PathBuf)>,
+}
+
 pub fn prerequisites(
     root: &Path,
     config: &Config,
@@ -144,9 +150,10 @@ pub fn cross_arguments(
         target_dir.display().to_string(),
         "--package".into(),
         project.name.clone(),
-        "--bin".into(),
-        project.binary.clone(),
     ]);
+    for binary in &project.binaries {
+        args.extend(["--bin".into(), binary.clone()]);
+    }
     args
 }
 
@@ -156,7 +163,7 @@ pub fn build(
     config: &Config,
     engine: &str,
     runner: &Runner,
-) -> Result<Vec<(String, PathBuf)>, Error> {
+) -> Result<Vec<TargetOutputs>, Error> {
     let target_base = project.target_directory.join("binstall-publisher");
     fs::create_dir_all(&target_base)
         .map_err(|e| Error(format!("cannot create {}: {e}", target_base.display())))?;
@@ -188,23 +195,30 @@ pub fn build(
         let args = cross_arguments(project, config, target, &target_dir);
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         runner.output_with("cross", &borrowed, root, &environment, &[])?;
-        let binary = target_dir
-            .join(target)
-            .join(profile_dir)
-            .join(policy::binary_filename(&project.binary, target));
-        let metadata = fs::symlink_metadata(&binary).map_err(|_| {
-            Error(format!(
-                "Build did not produce a regular binary: {}",
-                binary.display()
-            ))
-        })?;
-        if !metadata.file_type().is_file() {
-            return Err(Error(format!(
-                "Build did not produce a regular binary: {}",
-                binary.display()
-            )));
+        let mut binaries = Vec::new();
+        for name in &project.binaries {
+            let binary = target_dir
+                .join(target)
+                .join(profile_dir)
+                .join(policy::binary_filename(name, target));
+            let metadata = fs::symlink_metadata(&binary).map_err(|_| {
+                Error(format!(
+                    "Build did not produce a regular binary: {}",
+                    binary.display()
+                ))
+            })?;
+            if !metadata.file_type().is_file() {
+                return Err(Error(format!(
+                    "Build did not produce a regular binary: {}",
+                    binary.display()
+                )));
+            }
+            binaries.push((name.clone(), binary));
         }
-        outputs.push((target.clone(), binary));
+        outputs.push(TargetOutputs {
+            target: target.clone(),
+            binaries,
+        });
     }
     Ok(outputs)
 }
@@ -217,7 +231,7 @@ mod tests {
         let project = SelectedPackage {
             name: "cli".into(),
             version: "0.1.0".into(),
-            binary: "cli".into(),
+            binaries: vec!["cli".into(), "helper".into()],
             manifest: PathBuf::from("Cargo.toml"),
             repository: None,
             target_directory: PathBuf::from("target"),
@@ -228,6 +242,7 @@ mod tests {
             locked: true,
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
+            package_format: crate::config::PackageFormat::Tgz,
         };
         let args = cross_arguments(
             &project,
@@ -248,7 +263,9 @@ mod tests {
                 "--package",
                 "cli",
                 "--bin",
-                "cli"
+                "cli",
+                "--bin",
+                "helper"
             ]
         );
     }

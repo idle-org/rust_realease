@@ -63,7 +63,12 @@ pub fn plan(
             ));
         }
     }
-    let changes = manifest::changes(&project.manifest, repository, &config.tag_prefix)?;
+    let changes = manifest::changes(
+        &project.manifest,
+        repository,
+        &config.tag_prefix,
+        config.package_format.archives(),
+    )?;
     let manifest_old = fs::read_to_string(&project.manifest)
         .map_err(|e| Error(format!("cannot read manifest: {e}")))?;
     let manifest_new = manifest::repair(&project.manifest, &changes, false)?;
@@ -462,6 +467,7 @@ mod tests {
             locked: true,
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
+            package_format: crate::config::PackageFormat::Tgz,
         };
         (temp, project, config, runner)
     }

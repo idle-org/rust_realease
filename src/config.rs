@@ -1,4 +1,5 @@
 use crate::error::Error;
+use clap::ValueEnum;
 use serde::Deserialize;
 use std::{fs, path::Path};
 
@@ -37,6 +38,21 @@ pub struct Config {
     pub locked: bool,
     pub tag_prefix: String,
     pub token_env: String,
+    pub package_format: PackageFormat,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PackageFormat {
+    Tgz,
+    Binary,
+    Both,
+}
+impl PackageFormat {
+    pub fn archives(self) -> bool {
+        matches!(self, Self::Tgz | Self::Both)
+    }
+    pub fn binaries(self) -> bool {
+        matches!(self, Self::Binary | Self::Both)
+    }
 }
 #[derive(Default)]
 pub struct Overrides {
@@ -44,6 +60,7 @@ pub struct Overrides {
     pub profile: Option<String>,
     pub unlocked: bool,
     pub tag_prefix: Option<String>,
+    pub package_format: Option<PackageFormat>,
 }
 pub fn load(path: Option<&Path>, overrides: Overrides) -> Result<Config, Error> {
     if let Some(path) = path {
@@ -61,9 +78,16 @@ fn parse(source: &str, overrides: Overrides) -> Result<Config, Error> {
     let release = file.release.unwrap_or_default();
     let package = file.package.unwrap_or_default();
     let gitea = file.gitea.unwrap_or_default();
-    if package.format.as_deref().unwrap_or("tgz") != "tgz" {
-        return Err(Error("Only package.format = \"tgz\" is supported.".into()));
-    }
+    let package_format = match package.format.as_deref().unwrap_or("tgz") {
+        "tgz" => PackageFormat::Tgz,
+        "binary" => PackageFormat::Binary,
+        "both" => PackageFormat::Both,
+        _ => {
+            return Err(Error(
+                "package.format must be \"tgz\", \"binary\", or \"both\".".into(),
+            ))
+        }
+    };
     let mut config = Config {
         targets: if overrides.targets.is_empty() {
             build.targets.unwrap_or_else(|| {
@@ -92,6 +116,7 @@ fn parse(source: &str, overrides: Overrides) -> Result<Config, Error> {
             .or(release.tag_prefix)
             .unwrap_or_else(|| "v".into()),
         token_env: gitea.token_env.unwrap_or_else(|| "GITEA_TOKEN".into()),
+        package_format: overrides.package_format.unwrap_or(package_format),
     };
     if config.targets.is_empty() || config.targets.iter().any(|target| !valid_target(target)) {
         return Err(Error(
@@ -153,6 +178,12 @@ mod tests {
         assert_eq!(config.tag_prefix, "");
         assert!(parse("[build]\ntargets=['bad']", Overrides::default()).is_err());
         assert!(parse("[package]\nformat='zip'", Overrides::default()).is_err());
+        assert_eq!(
+            parse("[package]\nformat='both'", Overrides::default())
+                .unwrap()
+                .package_format,
+            PackageFormat::Both
+        );
         assert_eq!(load(None, Overrides::default()).unwrap().targets.len(), 3);
     }
 }

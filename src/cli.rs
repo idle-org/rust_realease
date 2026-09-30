@@ -1,6 +1,6 @@
 use crate::{
     build,
-    config::{self, Overrides},
+    config::{self, Overrides, PackageFormat},
     error::Error,
     gitea::Gitea,
     manifest,
@@ -65,6 +65,9 @@ pub struct Cli {
     pub repository_url: Option<String>,
     #[arg(long)]
     pub config: Option<PathBuf>,
+    /// Release tgz archives, raw binaries, or both.
+    #[arg(long, value_enum)]
+    pub artifact_format: Option<PackageFormat>,
 }
 
 pub fn run(args: Cli) -> Result<(), Error> {
@@ -88,6 +91,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
             profile: args.profile,
             unlocked: args.unlocked,
             tag_prefix: args.tag_prefix,
+            package_format: args.artifact_format,
         },
     )?;
     let runner = Runner::new(&config.token_env).with_verbose(args.verbose);
@@ -120,7 +124,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
     }
     println!("Package: {}", selected.name);
     println!("Version: {}", selected.version);
-    println!("Binary: {}", selected.binary);
+    println!("Binaries: {}", selected.binaries.join(", "));
     println!("Manifest: {}", selected.manifest.display());
     println!("Tag: {tag}");
     if args
@@ -164,9 +168,18 @@ pub fn run(args: Cli) -> Result<(), Error> {
             }
         }
     }
-    let issues = manifest::changes(&selected.manifest, &repository, &config.tag_prefix)?;
+    let issues = manifest::changes(
+        &selected.manifest,
+        &repository,
+        &config.tag_prefix,
+        config.package_format.archives(),
+    )?;
     if issues.is_empty() {
-        println!("Binstall metadata: valid");
+        if config.package_format.archives() {
+            println!("Binstall metadata: valid");
+        } else {
+            println!("Release metadata: valid");
+        }
     }
     for issue in &issues {
         let actual = if issue.actual.is_some() {
@@ -206,18 +219,36 @@ pub fn run(args: Cli) -> Result<(), Error> {
         return Ok(());
     }
     for target in &config.targets {
-        println!(
-            "{target}: {} ({})",
-            policy::archive_name(&selected.name, target, &selected.version),
-            policy::binary_filename(&selected.binary, target)
-        );
+        if config.package_format.archives() {
+            println!(
+                "{target} archive: {} ({})",
+                policy::archive_name(&selected.name, target, &selected.version),
+                selected
+                    .binaries
+                    .iter()
+                    .map(|binary| policy::binary_filename(binary, target))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if config.package_format.binaries() {
+            for binary in &selected.binaries {
+                println!(
+                    "{target} binary: {}",
+                    policy::binary_asset_name(binary, target, &selected.version)
+                );
+            }
+        }
     }
-    for (key, value) in policy::binstall_metadata(&config.tag_prefix) {
-        println!("Binstall {key}: {value}");
+    if config.package_format.archives() {
+        for (key, value) in policy::binstall_metadata(&config.tag_prefix) {
+            println!("Binstall {key}: {value}");
+        }
     }
     println!("Release destination: {repository}/releases/tag/{tag}");
     let needs_cross = args.stop_after != Some(Stage::Verify);
-    let needs_binstall = !args.skip_binstall_test
+    let needs_binstall = config.package_format.archives()
+        && !args.skip_binstall_test
         && args
             .stop_after
             .is_none_or(|stage| stage.order() >= Stage::Binstall.order());
@@ -274,8 +305,8 @@ pub fn run(args: Cli) -> Result<(), Error> {
         &checkout.root,
         &selected.name,
         &selected.version,
-        &selected.binary,
         &outputs,
+        config.package_format,
     )?;
     println!(
         "Artifacts: {}",
@@ -285,10 +316,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
         )
     );
     for artifact in &artifacts {
-        println!(
-            "Packaged {}: {}/{}",
-            artifact.target, artifact.root, artifact.binary
-        );
+        println!("Packaged {}: {}", artifact.target, artifact.path.display());
     }
     if args.stop_after == Some(Stage::Package) {
         return Ok(());
@@ -321,7 +349,7 @@ pub fn run(args: Cli) -> Result<(), Error> {
             None
         },
     )?;
-    if !args.skip_binstall_test {
+    if config.package_format.archives() && !args.skip_binstall_test {
         verify::verify_binstall(&checkout.root, &selected, &config.targets, &runner)?;
     }
     println!("Release completed and published artifacts verified.");

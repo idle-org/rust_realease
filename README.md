@@ -1,10 +1,10 @@
 # rust_realease
 
-`rust_realease` builds and publishes one binary from a Rust package to a Gitea release. Give it a local project directory or a Git URL. It inspects Cargo metadata, checks the version tag, builds the selected targets with Cross, creates `.tgz` archives and `SHA256SUMS`, uploads them, and verifies release downloads. It can also prepare a project for release with explicit commit, tag, and push options.
+`rust_realease` builds and publishes the binaries from a Rust package to a Gitea release. Give it a local project directory or a Git URL. It inspects Cargo metadata, checks the version tag, builds the selected targets with Cross, creates cargo-binstall-compatible `.tgz` archives, directly downloadable executables, or both, writes `SHA256SUMS`, uploads the assets, and verifies release downloads. It can also prepare a project for release with explicit commit, tag, and push options.
 
 ## Install
 
-Install Rust and Cargo, Git, Cross, Docker or Podman, and cargo-binstall. A working container backend is needed for release builds.
+Install Rust and Cargo, Git, Cross, and Docker or Podman. Install cargo-binstall when producing the default `tgz` artifacts and running end-to-end install verification. A working container backend is needed for release builds.
 
 ```bash
 cargo install --path . --locked
@@ -28,7 +28,7 @@ For a workspace, select the exact Cargo package name:
 rust_realease ./my-workspace --package my-tool --dry-run
 ```
 
-Each run handles one package with one binary. A dry run reports the package, version, expected tag, metadata changes, build targets, archive names, prerequisites, and release destination. It writes no project files, builds no binaries, and changes no Git refs or releases. It exits nonzero when it finds requirements that still need attention.
+Each run handles one package and all of its Cargo binary targets. A dry run reports the package, version, expected tag, metadata changes, build targets, artifact names, prerequisites, and release destination. It writes no project files, builds no binaries, and changes no Git refs or releases. It exits nonzero when it finds requirements that still need attention.
 
 ## Prepare a release
 
@@ -53,19 +53,26 @@ rust_realease ./my-tool --prepare-repo \
 
 The preparation commit uses your configured Git author and signing settings. The tag is annotated and follows your Git tag-signing configuration (`git config tag.gpgsign true` to sign it); an existing tag is never moved. The branch and tag are pushed atomically without force. Use `--cross-image-tag main` only when you want preparation to set Cross images for the selected targets.
 
-## Build local archives
+## Build local artifacts
 
 ```bash
 rust_realease ./my-tool --stop-after package
 ```
 
-This runs host `cargo check` and `cargo test`, builds the selected targets with Cross, and writes archives plus `SHA256SUMS` into a new `dist/release-*/` directory. It does not contact Gitea. The default targets are:
+This runs host `cargo check` and `cargo test`, builds the selected targets with Cross, and writes the configured artifacts plus `SHA256SUMS` into a new `dist/release-*/` directory. It does not contact Gitea. The default targets are:
 
 - `x86_64-unknown-linux-musl`
 - `aarch64-unknown-linux-musl`
 - `x86_64-pc-windows-gnu`
 
 Override the matrix with repeatable `--target TARGET` options. Use `--stop-after verify` for host checks alone.
+
+Use `--artifact-format binary` when you only want raw executables, or `--artifact-format both` to publish raw executables alongside the default cargo-binstall archives:
+
+```bash
+rust_realease ./my-tool --artifact-format binary --stop-after package
+rust_realease ./my-tool --artifact-format both
+```
 
 ## Publish to Gitea
 

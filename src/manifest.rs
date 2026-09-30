@@ -39,7 +39,12 @@ fn binstall(package: &Table) -> Result<Option<&Table>, Error> {
         .ok_or_else(|| Error("package.metadata.binstall must be a table.".into()))
 }
 
-pub fn changes(path: &Path, repository: &str, prefix: &str) -> Result<Vec<Change>, Error> {
+pub fn changes(
+    path: &Path,
+    repository: &str,
+    prefix: &str,
+    require_binstall: bool,
+) -> Result<Vec<Change>, Error> {
     let doc = document(path)?;
     let package = package(&doc)?;
     let mut result = Vec::new();
@@ -53,6 +58,9 @@ pub fn changes(path: &Path, repository: &str, prefix: &str) -> Result<Vec<Change
             actual,
             expected: Some(repository.into()),
         });
+    }
+    if !require_binstall {
+        return Ok(result);
     }
     let metadata = binstall(package)?;
     let expected = policy::binstall_metadata(prefix);
@@ -144,7 +152,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Cargo.toml");
         fs::write(&path, "# keep this comment\n[package]\nname = 'demo'\nversion = '0.1.0'\nrepository = 'https://old.example/x/y' # keep inline\n[package.metadata.binstall]\npkg-fmt = 'zip'\ncustom = 'bad'\n").unwrap();
-        let issues = changes(&path, "https://example.com/x/y", "release-").unwrap();
+        let issues = changes(&path, "https://example.com/x/y", "release-", true).unwrap();
         assert_eq!(issues.len(), 5);
         let before = fs::read_to_string(&path).unwrap();
         let preview = repair(&path, &issues, false).unwrap();
@@ -152,7 +160,7 @@ mod tests {
         assert!(preview.contains("# keep this comment"));
         assert!(preview.contains("# keep inline"));
         repair(&path, &issues, true).unwrap();
-        assert!(changes(&path, "https://example.com/x/y", "release-")
+        assert!(changes(&path, "https://example.com/x/y", "release-", true)
             .unwrap()
             .is_empty());
         assert_eq!(
@@ -165,9 +173,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Cargo.toml");
         fs::write(&path, "[package]\nname='demo'\nmetadata='oops'\n").unwrap();
-        assert!(changes(&path, "https://example.com/x/y", "v")
+        assert!(changes(&path, "https://example.com/x/y", "v", true)
             .unwrap_err()
             .to_string()
             .contains("package.metadata must be a table"));
+        let issues = changes(&path, "https://example.com/x/y", "v", false).unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].key, "package.repository");
     }
 }

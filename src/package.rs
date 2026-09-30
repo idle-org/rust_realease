@@ -1,4 +1,4 @@
-use crate::{error::Error, policy};
+use crate::{build::TargetOutputs, config::PackageFormat, error::Error, policy};
 use flate2::{Compression, GzBuilder};
 use sha2::{Digest, Sha256};
 use std::{
@@ -11,22 +11,30 @@ use std::{
 pub struct Artifact {
     pub target: String,
     pub path: PathBuf,
-    pub root: String,
-    pub binary: String,
+    pub contents: ArtifactContents,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum ArtifactContents {
+    Archive { root: String, binaries: Vec<String> },
+    Binary,
 }
 
 pub fn package(
     root: &Path,
     name: &str,
     version: &str,
-    binary: &str,
-    outputs: &[(String, PathBuf)],
+    outputs: &[TargetOutputs],
+    format: PackageFormat,
 ) -> Result<(Vec<Artifact>, PathBuf), Error> {
-    for (target, _) in outputs {
-        safe_component(&policy::archive_root(name, target, version))?;
-        safe_component(&policy::archive_name(name, target, version))?;
-        safe_component(&policy::binary_filename(binary, target))?;
+    for output in outputs {
+        safe_component(&policy::archive_root(name, &output.target, version))?;
+        safe_component(&policy::archive_name(name, &output.target, version))?;
+        for (binary, _) in &output.binaries {
+            safe_component(&policy::binary_filename(binary, &output.target))?;
+            safe_component(&policy::binary_asset_name(binary, &output.target, version))?;
+        }
     }
     let dist = root.join("dist");
     if dist.is_symlink() {
@@ -39,63 +47,97 @@ pub fn package(
         .tempdir_in(&dist)
         .map_err(|e| Error(format!("cannot create release staging directory: {e}")))?;
     let mut artifacts = Vec::new();
-    for (target, source) in outputs {
-        let archive_root = policy::archive_root(name, target, version);
-        let filename = policy::archive_name(name, target, version);
-        let executable = policy::binary_filename(binary, target);
-        let path = staging.path().join(filename);
-        let metadata = fs::symlink_metadata(source)
-            .map_err(|e| Error(format!("cannot inspect binary {}: {e}", source.display())))?;
-        if !metadata.file_type().is_file() {
-            return Err(Error(format!(
-                "Build did not produce a regular binary: {}",
-                source.display()
-            )));
+    for output in outputs {
+        for (_, source) in &output.binaries {
+            let metadata = fs::symlink_metadata(source)
+                .map_err(|e| Error(format!("cannot inspect binary {}: {e}", source.display())))?;
+            if !metadata.file_type().is_file() {
+                return Err(Error(format!(
+                    "Build did not produce a regular binary: {}",
+                    source.display()
+                )));
+            }
         }
-        let mode = if target.split('-').any(|part| part == "windows") {
-            0o644
-        } else {
-            unix_mode(&metadata) | 0o111
-        };
-        let output = File::create(&path)
-            .map_err(|e| Error(format!("cannot create archive {}: {e}", path.display())))?;
-        let mut gzip = GzBuilder::new()
-            .mtime(0)
-            .operating_system(255)
-            .write(output, Compression::default());
-        write_header(&mut gzip, &archive_root, 0o755, 0, b'5')?;
-        write_header(
-            &mut gzip,
-            &format!("{archive_root}/{executable}"),
-            mode,
-            metadata.len(),
-            b'0',
-        )?;
-        let mut input = File::open(source)
-            .map_err(|e| Error(format!("cannot open binary {}: {e}", source.display())))?;
-        let copied = io::copy(&mut input, &mut gzip)
-            .map_err(|e| Error(format!("cannot archive {}: {e}", source.display())))?;
-        if copied != metadata.len() {
-            return Err(Error(format!(
-                "Binary changed while packaging: {}",
-                source.display()
-            )));
+        if format.archives() {
+            let archive_root = policy::archive_root(name, &output.target, version);
+            let path = staging
+                .path()
+                .join(policy::archive_name(name, &output.target, version));
+            let archive = File::create(&path)
+                .map_err(|e| Error(format!("cannot create archive {}: {e}", path.display())))?;
+            let mut gzip = GzBuilder::new()
+                .mtime(0)
+                .operating_system(255)
+                .write(archive, Compression::default());
+            write_header(&mut gzip, &archive_root, 0o755, 0, b'5')?;
+            let mut names = Vec::new();
+            for (binary, source) in &output.binaries {
+                let metadata = fs::symlink_metadata(source).map_err(|e| {
+                    Error(format!("cannot inspect binary {}: {e}", source.display()))
+                })?;
+                let executable = policy::binary_filename(binary, &output.target);
+                let mode = if output.target.split('-').any(|part| part == "windows") {
+                    0o644
+                } else {
+                    unix_mode(&metadata) | 0o111
+                };
+                write_header(
+                    &mut gzip,
+                    &format!("{archive_root}/{executable}"),
+                    mode,
+                    metadata.len(),
+                    b'0',
+                )?;
+                let mut input = File::open(source)
+                    .map_err(|e| Error(format!("cannot open binary {}: {e}", source.display())))?;
+                let copied = io::copy(&mut input, &mut gzip)
+                    .map_err(|e| Error(format!("cannot archive {}: {e}", source.display())))?;
+                if copied != metadata.len() {
+                    return Err(Error(format!(
+                        "Binary changed while packaging: {}",
+                        source.display()
+                    )));
+                }
+                let padding = (512 - metadata.len() % 512) % 512;
+                gzip.write_all(&vec![0; padding as usize])
+                    .map_err(|e| Error(format!("cannot pad archive: {e}")))?;
+                names.push(executable);
+            }
+            gzip.write_all(&[0; 1024])
+                .map_err(|e| Error(format!("cannot finish tar archive: {e}")))?;
+            gzip.finish()
+                .map_err(|e| Error(format!("cannot finish gzip archive: {e}")))?;
+            artifacts.push(Artifact {
+                target: output.target.clone(),
+                sha256: checksum(&path)?,
+                path,
+                contents: ArtifactContents::Archive {
+                    root: archive_root,
+                    binaries: names,
+                },
+            });
         }
-        let padding = (512 - metadata.len() % 512) % 512;
-        gzip.write_all(&vec![0; padding as usize])
-            .map_err(|e| Error(format!("cannot pad archive: {e}")))?;
-        gzip.write_all(&[0; 1024])
-            .map_err(|e| Error(format!("cannot finish tar archive: {e}")))?;
-        gzip.finish()
-            .map_err(|e| Error(format!("cannot finish gzip archive: {e}")))?;
-        let sha256 = checksum(&path)?;
-        artifacts.push(Artifact {
-            target: target.clone(),
-            path,
-            root: archive_root,
-            binary: executable,
-            sha256,
-        });
+        if format.binaries() {
+            for (binary, source) in &output.binaries {
+                let path =
+                    staging
+                        .path()
+                        .join(policy::binary_asset_name(binary, &output.target, version));
+                fs::copy(source, &path).map_err(|e| {
+                    Error(format!(
+                        "cannot export binary {} to {}: {e}",
+                        source.display(),
+                        path.display()
+                    ))
+                })?;
+                artifacts.push(Artifact {
+                    target: output.target.clone(),
+                    sha256: checksum(&path)?,
+                    path,
+                    contents: ArtifactContents::Binary,
+                });
+            }
+        }
     }
     let sums = staging.path().join("SHA256SUMS");
     artifacts.sort_by(|a, b| a.path.file_name().cmp(&b.path.file_name()));
@@ -215,26 +257,60 @@ mod tests {
     fn archive_contract_and_reproducibility() {
         let temp = tempfile::tempdir().unwrap();
         let binary = temp.path().join("demo");
+        let helper = temp.path().join("helper");
         fs::write(&binary, b"small executable").unwrap();
+        fs::write(&helper, b"helper executable").unwrap();
         let outputs = [
-            ("x86_64-unknown-linux-musl".to_owned(), binary.clone()),
-            ("x86_64-pc-windows-gnu".to_owned(), binary),
+            TargetOutputs {
+                target: "x86_64-unknown-linux-musl".to_owned(),
+                binaries: vec![
+                    ("demo".into(), binary.clone()),
+                    ("helper".into(), helper.clone()),
+                ],
+            },
+            TargetOutputs {
+                target: "x86_64-pc-windows-gnu".to_owned(),
+                binaries: vec![("demo".into(), binary), ("helper".into(), helper)],
+            },
         ];
-        let (first, sums) = package(temp.path(), "demo", "0.1.0", "demo", &outputs).unwrap();
-        assert_eq!(first.len(), 2);
-        assert_eq!(fs::read_to_string(sums).unwrap().lines().count(), 2);
-        let (second, _) = package(temp.path(), "demo", "0.1.0", "demo", &outputs).unwrap();
+        let (first, sums) =
+            package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Both).unwrap();
+        assert_eq!(first.len(), 6);
+        assert_eq!(fs::read_to_string(sums).unwrap().lines().count(), 6);
+        let names = first
+            .iter()
+            .map(|artifact| artifact.path.file_name().unwrap().to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"demo-x86_64-unknown-linux-musl-v0.1.0"));
+        assert!(names.contains(&"helper-x86_64-pc-windows-gnu-v0.1.0.exe"));
+        let (binary_only, _) = package(
+            temp.path(),
+            "demo",
+            "0.1.0",
+            &outputs,
+            PackageFormat::Binary,
+        )
+        .unwrap();
+        assert_eq!(binary_only.len(), 4);
+        assert!(binary_only
+            .iter()
+            .all(|artifact| matches!(&artifact.contents, ArtifactContents::Binary)));
+        let (second, _) =
+            package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Both).unwrap();
         for (one, two) in first.iter().zip(second.iter()) {
             assert_eq!(fs::read(&one.path).unwrap(), fs::read(&two.path).unwrap());
             assert_eq!(one.sha256, checksum(&one.path).unwrap());
+            let ArtifactContents::Archive { root, binaries } = &one.contents else {
+                continue;
+            };
             let mut tar = Vec::new();
             GzDecoder::new(File::open(&one.path).unwrap())
                 .read_to_end(&mut tar)
                 .unwrap();
-            assert_eq!(&tar[..one.root.len()], one.root.as_bytes());
+            assert_eq!(&tar[..root.len()], root.as_bytes());
             assert_eq!(tar[156], b'5');
             let file_header = &tar[512..1024];
-            let expected = format!("{}/{}", one.root, one.binary);
+            let expected = format!("{}/{}", root, binaries[0]);
             assert_eq!(&file_header[..expected.len()], expected.as_bytes());
             assert_eq!(file_header[156], b'0');
             assert_eq!(&tar[1024..1024 + 16], b"small executable");
@@ -251,25 +327,22 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let binary = temp.path().join("demo");
         fs::write(&binary, "binary").unwrap();
+        let outputs = [TargetOutputs {
+            target: "x86_64-unknown-linux-musl".into(),
+            binaries: vec![("demo".into(), binary.clone())],
+        }];
         assert!(package(
             temp.path(),
             "../escape",
             "0.1.0",
-            "demo",
-            &[("x86_64-unknown-linux-musl".into(), binary.clone())]
+            &outputs,
+            PackageFormat::Tgz,
         )
         .is_err());
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(temp.path(), temp.path().join("dist")).unwrap();
-            assert!(package(
-                temp.path(),
-                "demo",
-                "0.1.0",
-                "demo",
-                &[("x86_64-unknown-linux-musl".into(), binary)]
-            )
-            .is_err());
+            assert!(package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Tgz,).is_err());
         }
     }
 }

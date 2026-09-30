@@ -58,6 +58,14 @@ rust_realease ./my-tool --prepare-repo \
   --commit-preparation --create-tag --push-preparation
 ```
 
+If you only want to add or repair the recommended `[package.metadata.binstall]` entries in `Cargo.toml`, use the existing metadata-only path:
+
+```bash
+rust_realease ./my-tool --fix-metadata --stop-after metadata
+```
+
+Preview the same change without writing it by adding `--dry-run`. The generated values follow the archive layout produced by `rust_realease`, including the configured release tag prefix.
+
 The preparation commit uses your configured Git author and signing settings. The tag is annotated and follows your Git tag-signing configuration (`git config tag.gpgsign true` to sign it); an existing tag is never moved. The branch and tag are pushed atomically without force. Use `--cross-image-tag main` only when you want preparation to set Cross images for the selected targets.
 
 ## Build local artifacts

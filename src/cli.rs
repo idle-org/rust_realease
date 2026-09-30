@@ -33,6 +33,7 @@ pub struct Cli {
     pub unlocked: bool,
     #[arg(long)]
     pub dry_run: bool,
+    /// Add or repair supported Cargo release metadata, including cargo-binstall metadata.
     #[arg(long)]
     pub fix_metadata: bool,
     #[arg(long)]

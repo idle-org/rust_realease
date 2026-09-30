@@ -108,6 +108,8 @@ For a remote repository, select the exact tag to check out:
 rust_realease https://gitea.example.org/owner/my-tool.git --tag v0.1.0
 ```
 
+If Git uses an internal repository URL but releases must use a public proxy, add an exact repository fallback to a project `rust-release.toml` or to the user configuration. The public fallback is used for Cargo metadata, Gitea publication, download verification, and cargo-binstall while the configured Git origin remains valid for cloning and preparation pushes. See [Advanced usage](docs/advanced-usage.md#configuration) for the file locations and an example.
+
 The token account needs repository read access and release write access. `--push-preparation` additionally needs code write access. The token is read from `GITEA_TOKEN` by default and is kept out of child build processes. Public releases are verified by anonymous downloads. Private releases are downloaded with Gitea authentication; use `--skip-binstall-test` for them because cargo-binstall cannot install from their private attachment URLs. An existing asset with the same name stops the upload; `--replace-assets` explicitly permits replacing matching assets.
 
 ## More options

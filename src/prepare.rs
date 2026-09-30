@@ -248,8 +248,8 @@ pub fn run(
             );
             let destination =
                 runner.text("git", &["remote", "get-url", "--push", "origin"], root)?;
-            if project::normalize_repository(&destination)? != repository {
-                return Err(Error("origin push URL differs from the release repository. Fix origin explicitly before pushing.".into()));
+            if !config.repositories_match(&destination, repository)? {
+                return Err(Error("origin push URL differs from the release repository and no configured fallback maps them together.".into()));
             }
         }
     }
@@ -369,8 +369,8 @@ fn push_preparation(
     runner: &Runner,
 ) -> Result<(), Error> {
     let origin = runner.text("git", &["remote", "get-url", "--push", "origin"], root)?;
-    if project::normalize_repository(&origin)? != repository {
-        return Err(Error("origin push URL differs from the release repository. Fix origin explicitly before pushing.".into()));
+    if !config.repositories_match(&origin, repository)? {
+        return Err(Error("origin push URL differs from the release repository and no configured fallback maps them together.".into()));
     }
     let branch_ref = format!("HEAD:refs/heads/{branch}");
     let tag_ref = format!("refs/tags/{tag}");
@@ -466,6 +466,7 @@ mod tests {
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
             package_format: crate::config::PackageFormat::Tgz,
+            repository_fallbacks: Vec::new(),
         };
 
         let plan = plan(
@@ -526,6 +527,7 @@ mod tests {
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
             package_format: crate::config::PackageFormat::Tgz,
+            repository_fallbacks: Vec::new(),
         };
         (temp, project, config, runner)
     }
@@ -718,6 +720,47 @@ mod tests {
         .to_string()
         .contains("differs"));
         assert_eq!(fs::read_to_string(root.join("Cargo.toml")).unwrap(), before);
+        assert!(!root.join("Cross.toml").exists());
+    }
+
+    #[test]
+    fn configured_fallback_allows_internal_push_destination() {
+        let (temp, project, mut config, runner) = fixture();
+        let root = temp.path();
+        runner
+            .output(
+                "git",
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "http://git.example.org/team/demo.git",
+                ],
+                root,
+            )
+            .unwrap();
+        config
+            .repository_fallbacks
+            .push(crate::config::RepositoryFallback {
+                origin: "http://git.example.org/team/demo".into(),
+                fallback_url: "https://example.org/team/demo".into(),
+            });
+        run(
+            root,
+            &project,
+            &config,
+            "https://example.org/team/demo",
+            Options {
+                tag: "v0.1.0",
+                image_tag: None,
+                dry_run: true,
+                commit: true,
+                create_tag: true,
+                push: true,
+            },
+            &runner,
+        )
+        .unwrap();
         assert!(!root.join("Cross.toml").exists());
     }
 

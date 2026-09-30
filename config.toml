@@ -14,5 +14,8 @@ locked = true
 [package]
 format = "tgz"
 
+[repository]
+fallbacks = []
+
 [gitea]
 token-env = "GITEA_TOKEN"

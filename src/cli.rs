@@ -85,8 +85,20 @@ pub fn run(args: Cli) -> Result<(), Error> {
             "--prepare-repo is a separate mode; omit --stop-after.".into(),
         ));
     }
+    let acquisition_runner = Runner::new("GITEA_TOKEN").with_verbose(args.verbose);
+    let checkout = project::acquire_project(
+        &args.source,
+        if args.prepare_repo {
+            None
+        } else {
+            args.tag.as_deref()
+        },
+        args.keep_workdir || args.prepare_repo,
+        &acquisition_runner,
+    )?;
     let config = config::load(
         args.config.as_deref(),
+        &checkout.root,
         Overrides {
             targets: args.target,
             profile: args.profile,
@@ -96,16 +108,6 @@ pub fn run(args: Cli) -> Result<(), Error> {
         },
     )?;
     let runner = Runner::new(&config.token_env).with_verbose(args.verbose);
-    let checkout = project::acquire_project(
-        &args.source,
-        if args.prepare_repo {
-            None
-        } else {
-            args.tag.as_deref()
-        },
-        args.keep_workdir || args.prepare_repo,
-        &runner,
-    )?;
     let root = checkout
         .root
         .to_str()
@@ -159,12 +161,16 @@ pub fn run(args: Cli) -> Result<(), Error> {
                     .into(),
             )
         })?;
-    let repository = project::normalize_repository(&candidate)?;
+    let normalized_candidate = project::normalize_repository(&candidate)?;
+    let repository = config.resolve_repository(&candidate)?;
+    if repository != normalized_candidate {
+        println!("Repository fallback: {normalized_candidate} -> {repository}");
+    }
     if publishing {
         if let Some(origin) = project::origin_url(&checkout.root, &runner) {
-            if project::normalize_repository(&origin)? != repository {
+            if !config.repositories_match(&origin, &repository)? {
                 return Err(Error(
-                    "Git origin differs from the release repository.".into(),
+                    "Git origin differs from the release repository and no configured fallback maps them together.".into(),
                 ));
             }
         }

@@ -21,7 +21,15 @@ Use `--package NAME` to select one workspace member by its exact Cargo package n
 
 ## Configuration
 
-The bundled `config.toml` supplies defaults. Pass `--config PATH` to use another file; CLI values override its build and tag settings.
+Configuration is layered in this order, with later values taking precedence:
+
+1. bundled defaults;
+2. the user configuration at the platform-native config directory returned by the `directories` crate (`~/.config/rust_realease/config.toml` on Linux);
+3. `rust-release.toml` in the acquired project root;
+4. the file passed with `--config PATH`;
+5. CLI options.
+
+Missing automatically discovered files are ignored. A path explicitly passed with `--config` must exist and be valid TOML. Repository fallback lists are combined across layers; a later entry for the same normalized origin replaces the earlier entry.
 
 ```toml
 [release]
@@ -39,6 +47,9 @@ locked = true
 [package]
 format = "tgz"
 
+[repository]
+fallbacks = []
+
 [gitea]
 token-env = "GITEA_TOKEN"
 ```
@@ -46,6 +57,16 @@ token-env = "GITEA_TOKEN"
 Use `--tag-prefix ""` for an unprefixed tag such as `0.3.1`. `--tag TAG` must match the selected package version and configured prefix. `--unlocked` permits builds without the usual locked dependency resolution; the default uses `--locked`.
 
 `package.format` accepts `"tgz"`, `"binary"`, or `"both"`. The default `"tgz"` produces cargo-binstall archives. `"binary"` produces only directly downloadable executables and does not require or verify cargo-binstall metadata. `"both"` produces both forms. The `--artifact-format` option overrides this setting for an individual run.
+
+When a checkout uses an internal Git URL but its Gitea API and release downloads are exposed through another URL, configure an exact fallback pair. For example, either the project file or the user file can contain:
+
+```toml
+[[repository.fallbacks]]
+origin = "http://git.dandaedre.com/idle-org/john-slop"
+fallback-url = "https://proxy.dandaedre.com/gitea/idle-org/john-slop"
+```
+
+URLs are normalized, including removal of a trailing `.git`; SCP-style and SSH URLs normalize to HTTPS. The scheme remains significant for HTTP(S), so add separate rules if the same origin is used through both HTTP and SSH. Each rule matches one repository, not an entire host. The fallback must use HTTPS because it becomes the Gitea API and public download base. It is also written to `package.repository` during metadata repair. Git continues to clone and push through `origin`; the mapping tells the safety checks that the internal and public repositories are equivalent.
 
 ## Metadata and preparation
 

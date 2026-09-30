@@ -247,6 +247,7 @@ mod tests {
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
             package_format: crate::config::PackageFormat::Tgz,
+            repository_fallbacks: Vec::new(),
         };
         let args = cross_arguments(
             &project,

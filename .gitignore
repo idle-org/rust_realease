@@ -2,5 +2,6 @@
 /dist/
 /.venv/
 .env
+gitea_token.txt
 **/*.rs.bk
 *.pdb

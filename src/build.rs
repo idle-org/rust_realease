@@ -192,12 +192,16 @@ pub fn build(
     let mut outputs = Vec::new();
     for target in &config.targets {
         println!("Building {target}");
-        let args = cross_arguments(project, config, target, &target_dir);
+        // Cross images can use different host libc versions. Keep their native
+        // build scripts and proc macros isolated so a later image never tries
+        // to execute artifacts produced by an earlier one.
+        let target_build_dir = target_dir.join(target);
+        let args = cross_arguments(project, config, target, &target_build_dir);
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         runner.output_with("cross", &borrowed, root, &environment, &[])?;
         let mut binaries = Vec::new();
         for name in &project.binaries {
-            let binary = target_dir
+            let binary = target_build_dir
                 .join(target)
                 .join(profile_dir)
                 .join(policy::binary_filename(name, target));

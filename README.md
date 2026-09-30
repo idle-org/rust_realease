@@ -71,7 +71,7 @@ The preparation commit uses your configured Git author and signing settings. The
 ## Build local artifacts
 
 ```bash
-rust_realease ./my-tool --stop-after package
+rust_realease ./my-tool --compile-only
 ```
 
 This runs host `cargo check` and `cargo test`, builds the selected targets with Cross, and writes the configured artifacts plus `SHA256SUMS` into a new `dist/release-*/` directory. It does not contact Gitea. The default targets are:
@@ -85,7 +85,7 @@ Override the matrix with repeatable `--target TARGET` options. Use `--stop-after
 Use `--artifact-format binary` when you only want raw executables, or `--artifact-format both` to publish raw executables alongside the default cargo-binstall archives:
 
 ```bash
-rust_realease ./my-tool --artifact-format binary --stop-after package
+rust_realease ./my-tool --artifact-format binary --compile-only
 rust_realease ./my-tool --artifact-format both
 ```
 
@@ -108,6 +108,7 @@ process arguments and publishes both archive and standalone-binary assets:
 
 ```bash
 cargo install --path . --locked
+./release.sh ../gitea_token.txt --compile-only
 ./release.sh ../gitea_token.txt --dry-run
 ./release.sh ../gitea_token.txt
 ```

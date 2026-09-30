@@ -87,6 +87,8 @@ For repositories whose build scripts need a selected Rust toolchain inside Cross
 
 ## Pipeline stages
 
+`--compile-only` runs through the package stage and then stops: it performs host checks, cross-compiles, and writes local artifacts without creating or uploading a release. It is the explicit artifact-build mode and conflicts with `--dry-run`, `--prepare-repo`, and `--stop-after`.
+
 `--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. Release builds use fresh target directories to avoid stale build-script output. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously for public repositories or with Gitea authentication for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for public targets. `--skip-binstall-test` skips that install check, while retaining download verification.
 
 `--draft --stop-after upload` is useful when a release must stay private for review. Private repositories require `--skip-binstall-test`; cargo-binstall cannot fetch their attachment URLs, even when `GITEA_TOKEN` is set. `--prerelease` and `--draft` set properties when a release is created; reusing a release preserves its existing settings. Asset replacement is not transactional: if an upload fails after a matching asset is deleted, retry the publication explicitly.

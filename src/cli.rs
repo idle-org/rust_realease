@@ -52,6 +52,12 @@ pub struct Cli {
     pub verbose: bool,
     #[arg(long, value_enum)]
     pub stop_after: Option<Stage>,
+    /// Build and package local artifacts without creating or uploading a release.
+    #[arg(
+        long,
+        conflicts_with_all = ["dry_run", "stop_after", "prepare_repo"]
+    )]
+    pub compile_only: bool,
     #[arg(long)]
     pub prepare_repo: bool,
     #[arg(long)]
@@ -71,7 +77,10 @@ pub struct Cli {
     pub artifact_format: Option<PackageFormat>,
 }
 
-pub fn run(args: Cli) -> Result<(), Error> {
+pub fn run(mut args: Cli) -> Result<(), Error> {
+    if args.compile_only {
+        args.stop_after = Some(Stage::Package);
+    }
     if (args.commit_preparation
         || args.create_tag
         || args.push_preparation
@@ -445,5 +454,20 @@ mod tests {
             "metadata",
         ]);
         run(args).unwrap();
+    }
+
+    #[test]
+    fn compile_only_is_an_explicit_package_stage_without_release_options() {
+        let args = Cli::try_parse_from(["rust_realease", ".", "--compile-only"]).unwrap();
+        assert!(args.compile_only);
+        assert_eq!(args.stop_after, None);
+
+        for conflicting in ["--dry-run", "--stop-after", "--prepare-repo"] {
+            let mut arguments = vec!["rust_realease", ".", "--compile-only", conflicting];
+            if conflicting == "--stop-after" {
+                arguments.push("package");
+            }
+            assert!(Cli::try_parse_from(arguments).is_err());
+        }
     }
 }

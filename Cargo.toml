@@ -1,6 +1,6 @@
 [package]
 name = "rust_realease"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 publish = false
 repository = "https://proxy.dandaedre.com/gitea/idle-org/rust_realease"
@@ -12,6 +12,7 @@ bin-dir = "{ name }-{ target }-v{ version }/{ bin }{ binary-ext }"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+console = "0.16"
 directories = "6.0"
 toml = "1.1"
 serde = { version = "1", features = ["derive"] }

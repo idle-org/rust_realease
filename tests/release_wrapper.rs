@@ -42,7 +42,7 @@ fn release_wrapper_passes_the_token_and_preserves_the_ssh_origin() {
     }
     fs::write(
         repository.join("Cargo.toml"),
-        "[package]\nname = \"rust_realease\"\nversion = \"0.1.2\"\n",
+        "[package]\nname = \"rust_realease\"\nversion = \"0.1.3\"\n",
     )
     .expect("manifest should be written");
     fs::write(repository.join("token.txt"), "test-token\n").expect("token file should be written");

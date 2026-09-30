@@ -12,6 +12,7 @@ mod policy;
 mod prepare;
 mod project;
 mod runner;
+mod ui;
 mod verify;
 
 use clap::Parser;
@@ -19,7 +20,7 @@ use clap::Parser;
 fn main() {
     let args = cli::Cli::parse();
     if let Err(error) = cli::run(args) {
-        eprintln!("error: {error}");
+        ui::error(error);
         std::process::exit(1);
     }
 }

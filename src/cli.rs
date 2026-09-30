@@ -7,7 +7,7 @@ use crate::{
     model::Stage,
     policy, prepare, project,
     runner::Runner,
-    verify,
+    ui, verify,
 };
 use clap::Parser;
 use std::path::PathBuf;
@@ -134,11 +134,11 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             args.tag
         )));
     }
-    println!("Package: {}", selected.name);
-    println!("Version: {}", selected.version);
-    println!("Binaries: {}", selected.binaries.join(", "));
-    println!("Manifest: {}", selected.manifest.display());
-    println!("Tag: {tag}");
+    ui::detail("Package", &selected.name);
+    ui::detail("Version", &selected.version);
+    ui::detail("Binaries", selected.binaries.join(", "));
+    ui::detail("Manifest", selected.manifest.display());
+    ui::detail("Tag", &tag);
     if args
         .stop_after
         .is_some_and(|stage| stage.order() <= Stage::Inspect.order())
@@ -193,9 +193,9 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     )?;
     if issues.is_empty() {
         if config.package_format.archives() {
-            println!("Binstall metadata: valid");
+            ui::success("Binstall metadata valid");
         } else {
-            println!("Release metadata: valid");
+            ui::success("Release metadata valid");
         }
     }
     for issue in &issues {
@@ -262,7 +262,10 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             println!("Binstall {key}: {value}");
         }
     }
-    println!("Release destination: {repository}/releases/tag/{tag}");
+    ui::detail(
+        "Release destination",
+        format_args!("{repository}/releases/tag/{tag}"),
+    );
     let needs_cross = args.stop_after != Some(Stage::Verify);
     let needs_binstall = config.package_format.archives()
         && !args.skip_binstall_test
@@ -293,10 +296,10 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         }
     }
     for problem in &problems {
-        println!("Prerequisite: {problem}");
+        ui::warning(format_args!("Prerequisite: {problem}"));
     }
     if args.dry_run {
-        println!("Dry run complete: no manifest edits, builds or release mutations.");
+        ui::success("Dry run complete: no manifest edits, builds or release mutations");
         if !issues.is_empty() || !problems.is_empty() {
             return Err(Error(
                 "Dry run found the metadata/prerequisite issues reported above.".into(),
@@ -325,15 +328,19 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         &outputs,
         config.package_format,
     )?;
-    println!(
-        "Artifacts: {}",
+    ui::detail(
+        "Artifacts",
         sums.parent().map_or_else(
             || sums.display().to_string(),
-            |path| path.display().to_string()
-        )
+            |path| path.display().to_string(),
+        ),
     );
     for artifact in &artifacts {
-        println!("Packaged {}: {}", artifact.target, artifact.path.display());
+        ui::success(format_args!(
+            "Packaged {}: {}",
+            artifact.target,
+            artifact.path.display()
+        ));
     }
     if args.stop_after == Some(Stage::Package) {
         return Ok(());
@@ -342,7 +349,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     let (api, private) =
         publication.ok_or_else(|| Error("Publication client was not initialized.".into()))?;
     let release = api.ensure_release(&tag, &commit, args.draft, args.prerelease)?;
-    println!("Release ready: {tag}");
+    ui::success(format_args!("Release ready: {tag}"));
     if args.stop_after == Some(Stage::Release) {
         return Ok(());
     }
@@ -369,7 +376,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     if config.package_format.archives() && !args.skip_binstall_test {
         verify::verify_binstall(&checkout.root, &selected, &config.targets, &runner)?;
     }
-    println!("Release completed and published artifacts verified.");
+    ui::success("Release completed and published artifacts verified");
     Ok(())
 }
 

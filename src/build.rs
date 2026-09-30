@@ -1,7 +1,8 @@
-use crate::{config::Config, error::Error, policy, project::SelectedPackage, runner::Runner};
+use crate::{config::Config, error::Error, policy, project::SelectedPackage, runner::Runner, ui};
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 #[derive(Debug)]
@@ -190,8 +191,10 @@ pub fn build(
         &config.profile
     };
     let mut outputs = Vec::new();
+    let builds_started = Instant::now();
     for target in &config.targets {
         println!("Building {target}");
+        let target_started = Instant::now();
         // Cross images can use different host libc versions. Keep their native
         // build scripts and proc macros isolated so a later image never tries
         // to execute artifacts produced by an earlier one.
@@ -223,7 +226,15 @@ pub fn build(
             target: target.clone(),
             binaries,
         });
+        ui::success(format_args!(
+            "Built {target} in {:.1}s",
+            target_started.elapsed().as_secs_f64()
+        ));
     }
+    ui::success(format_args!(
+        "Cross builds complete in {:.1}s",
+        builds_started.elapsed().as_secs_f64()
+    ));
     Ok(outputs)
 }
 

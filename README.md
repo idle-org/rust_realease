@@ -37,6 +37,10 @@ rust_realease ./my-workspace --package my-tool --dry-run
 
 Each run handles one package and all of its Cargo binary targets. A dry run reports the package, version, expected tag, metadata changes, build targets, artifact names, prerequisites, and release destination. It writes no project files, builds no binaries, and changes no Git refs or releases. It exits nonzero when it finds requirements that still need attention.
 
+Interactive terminals use colored status markers. Cross builds report elapsed
+time for every target and for the complete build. Redirected output and CI logs
+remain plain.
+
 ## Prepare a release
 
 Preview the project changes first:

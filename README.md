@@ -11,6 +11,13 @@ cargo install --path . --locked
 rust_realease --help
 ```
 
+The released `john-slop` binary can be installed directly from its Gitea repository with cargo-binstall:
+
+```bash
+cargo binstall --git https://proxy.dandaedre.com/gitea/idle-org/john-slop \
+  john-slop
+```
+
 To run from this checkout without installing, use `cargo run -- SOURCE [OPTIONS]`.
 
 ## Start with a project

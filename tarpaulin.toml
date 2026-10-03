@@ -1,0 +1,13 @@
+[coverage]
+all-features = true
+engine = "Llvm"
+fail-under = 65.0
+locked = true
+run-types = ["Tests"]
+workspace = true
+
+[report]
+out = ["Stdout"]
+
+# This floor stays below the measured suite result without excluding production
+# code or manufacturing tests for process-only and platform failure paths.

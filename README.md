@@ -1,5 +1,9 @@
 # rust_realease
 
+![version](https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/version.svg)
+![tests](https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/test.svg)
+![test coverage](https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/coverage.svg)
+
 `rust_realease` builds and publishes the binaries from a Rust package to a Gitea release. Give it a local project directory or a Git URL. It inspects Cargo metadata, checks the version tag, builds the selected targets with Cross, creates cargo-binstall-compatible `.tgz` archives, directly downloadable executables, or both, writes `SHA256SUMS`, uploads the assets, and verifies release downloads. It can also prepare a project for release with explicit commit, tag, and push options.
 
 ## Install
@@ -139,6 +143,31 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 ```
 
-Jenkins runs Cargo tests only. Cross builds and live Gitea releases are separate release checks. The small [target_test_project fixture](https://proxy.dandaedre.com/gitea/idle-org/target_test_project) is maintained in its own repository for fast target matrix experiments. Clone it separately when needed; it is not part of this checkout.
+Jenkins runs Cargo tests and enforces a 65% line-coverage floor. Run the exact
+coverage command locally with:
+
+```bash
+cargo tarpaulin --config tarpaulin.toml --out Json --output-dir coverage
+```
+
+The current suite measures 66.12% (1,046/1,582 lines). `Cargo.toml` is the
+authoritative version source. Jenkins temporarily renames Tarpaulin's JSON to
+`coverage/summary.json`, extracts and validates the overall percentage, renders
+badges locally, then removes the summary. It archives only
+`coverage/version.svg`, `coverage/test.svg`, and `coverage/coverage.svg`, with
+fingerprinting. Successful `main` builds publish those files atomically under
+`/mnt/assets/coverage/idle-org/rust_realease/main/`, serving:
+
+- `https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/version.svg`
+- `https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/test.svg`
+- `https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/coverage.svg`
+
+The asset server must mount published assets read-only, disable directory
+listings, serve SVG with a restrictive content security policy, and revalidate
+these mutable URLs or use a short cache lifetime. Cross builds and live Gitea
+releases remain separate release checks. The small
+[target_test_project fixture](https://proxy.dandaedre.com/gitea/idle-org/target_test_project)
+is maintained in its own repository for fast target matrix experiments. Clone
+it separately when needed; it is not part of this checkout.
 
 With `cargo-binstall` installed, run the opt-in isolated install fixture for all three targets with `cargo test real_binstall_installs_local_release_fixture -- --ignored`.

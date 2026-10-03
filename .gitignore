@@ -1,5 +1,6 @@
 /target/
 /dist/
+/coverage/
 /.venv/
 .env
 gitea_token.txt

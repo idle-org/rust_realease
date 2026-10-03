@@ -1,4 +1,5 @@
 use crate::{config::Config, error::Error, policy, project::SelectedPackage, runner::Runner, ui};
+use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -9,6 +10,26 @@ use std::{
 pub struct TargetOutputs {
     pub target: String,
     pub binaries: Vec<(String, PathBuf)>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct BuildFingerprint {
+    format_version: u8,
+    commit: String,
+    package: String,
+    version: String,
+    binaries: Vec<String>,
+    targets: Vec<String>,
+    profile: String,
+    locked: bool,
+    engine: String,
+    toolchain: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct BuildCache {
+    fingerprint: BuildFingerprint,
+    target_dir: PathBuf,
 }
 
 pub fn prerequisites(
@@ -163,24 +184,51 @@ pub fn build(
     project: &SelectedPackage,
     config: &Config,
     engine: &str,
+    clean_commit: Option<&str>,
+    recompile: bool,
     runner: &Runner,
 ) -> Result<Vec<TargetOutputs>, Error> {
     let target_base = project.target_directory.join("binstall-publisher");
     fs::create_dir_all(&target_base)
         .map_err(|e| Error(format!("cannot create {}: {e}", target_base.display())))?;
+    let toolchain = executable("rustup").and_then(|_| {
+        runner
+            .text("rustup", &["show", "active-toolchain"], root)
+            .ok()
+            .and_then(|line| line.split_whitespace().next().map(str::to_owned))
+    });
+    let fingerprint = clean_commit.map(|commit| BuildFingerprint {
+        format_version: 1,
+        commit: commit.to_owned(),
+        package: project.name.clone(),
+        version: project.version.clone(),
+        binaries: project.binaries.clone(),
+        targets: config.targets.clone(),
+        profile: config.profile.clone(),
+        locked: config.locked,
+        engine: engine.to_owned(),
+        toolchain: toolchain.clone(),
+    });
+    let cache_path = target_base.join("release-build.json");
+    if !recompile {
+        if let Some(expected) = fingerprint.as_ref() {
+            if let Some(outputs) =
+                cached_outputs(&target_base, &cache_path, expected, project, config)?
+            {
+                ui::success(format_args!(
+                    "Reusing completed release build for commit {} (use --recompile to rebuild)",
+                    short_commit(&expected.commit)
+                ));
+                return Ok(outputs);
+            }
+        }
+    }
     let fresh = tempfile::Builder::new()
         .prefix("build-")
         .tempdir_in(&target_base)
         .map_err(|e| Error(format!("cannot create fresh build directory: {e}")))?;
     let target_dir = fresh.keep();
     println!("Fresh build directory: {}", target_dir.display());
-    let toolchain = executable("rustup")
-        .and_then(|_| {
-            runner
-                .text("rustup", &["show", "active-toolchain"], root)
-                .ok()
-        })
-        .and_then(|line| line.split_whitespace().next().map(str::to_owned));
     let mut environment = vec![("CROSS_CONTAINER_ENGINE", engine)];
     if let Some(toolchain) = toolchain.as_deref() {
         environment.push(("RUSTUP_TOOLCHAIN", toolchain));
@@ -235,23 +283,113 @@ pub fn build(
         "Cross builds complete in {:.1}s",
         builds_started.elapsed().as_secs_f64()
     ));
+    if let Some(fingerprint) = fingerprint {
+        let cache = BuildCache {
+            fingerprint,
+            target_dir,
+        };
+        let encoded = serde_json::to_vec_pretty(&cache)
+            .map_err(|e| Error(format!("cannot encode release build cache: {e}")))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&target_base)
+            .map_err(|e| Error(format!("cannot create release build cache: {e}")))?;
+        use std::io::Write as _;
+        temporary
+            .write_all(&encoded)
+            .map_err(|e| Error(format!("cannot write release build cache: {e}")))?;
+        temporary
+            .persist(&cache_path)
+            .map_err(|e| Error(format!("cannot save release build cache: {e}")))?;
+    }
     Ok(outputs)
+}
+
+fn cached_outputs(
+    target_base: &Path,
+    cache_path: &Path,
+    expected: &BuildFingerprint,
+    project: &SelectedPackage,
+    config: &Config,
+) -> Result<Option<Vec<TargetOutputs>>, Error> {
+    match fs::symlink_metadata(cache_path) {
+        Ok(metadata) if metadata.file_type().is_file() => (),
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(Error(format!(
+                "cannot inspect release build cache {}: {error}",
+                cache_path.display()
+            )))
+        }
+    }
+    let encoded =
+        fs::read(cache_path).map_err(|e| Error(format!("cannot read release build cache: {e}")))?;
+    let cache: BuildCache = match serde_json::from_slice(&encoded) {
+        Ok(cache) => cache,
+        Err(_) => return Ok(None),
+    };
+    if &cache.fingerprint != expected {
+        return Ok(None);
+    }
+    let base = fs::canonicalize(target_base)
+        .map_err(|e| Error(format!("cannot resolve build cache directory: {e}")))?;
+    let target_dir = match fs::canonicalize(&cache.target_dir) {
+        Ok(path) if path.starts_with(&base) => path,
+        _ => return Ok(None),
+    };
+    let profile_dir = if config.profile == "dev" {
+        "debug"
+    } else {
+        &config.profile
+    };
+    let mut outputs = Vec::new();
+    for target in &config.targets {
+        let mut binaries = Vec::new();
+        for name in &project.binaries {
+            let binary = target_dir
+                .join(target)
+                .join(target)
+                .join(profile_dir)
+                .join(policy::binary_filename(name, target));
+            let resolved = match fs::canonicalize(&binary) {
+                Ok(path) if path.starts_with(&base) => path,
+                _ => return Ok(None),
+            };
+            match fs::symlink_metadata(&binary) {
+                Ok(metadata) if metadata.file_type().is_file() => {
+                    binaries.push((name.clone(), resolved));
+                }
+                _ => return Ok(None),
+            }
+        }
+        outputs.push(TargetOutputs {
+            target: target.clone(),
+            binaries,
+        });
+    }
+    Ok(Some(outputs))
+}
+
+fn short_commit(commit: &str) -> &str {
+    commit.get(..12).unwrap_or(commit)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn cross_command_scopes_package_and_uses_fresh_target_path() {
-        let project = SelectedPackage {
+
+    fn test_project(target_directory: PathBuf) -> SelectedPackage {
+        SelectedPackage {
             name: "cli".into(),
             version: "0.1.0".into(),
             binaries: vec!["cli".into(), "helper".into()],
             manifest: PathBuf::from("Cargo.toml"),
             repository: None,
-            target_directory: PathBuf::from("target"),
-        };
-        let config = Config {
+            target_directory,
+        }
+    }
+
+    fn test_config() -> Config {
+        Config {
             targets: vec!["x86_64-pc-windows-gnu".into()],
             profile: "release".into(),
             locked: true,
@@ -259,7 +397,13 @@ mod tests {
             token_env: "GITEA_TOKEN".into(),
             package_format: crate::config::PackageFormat::Tgz,
             repository_fallbacks: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn cross_command_scopes_package_and_uses_fresh_target_path() {
+        let project = test_project(PathBuf::from("target"));
+        let config = test_config();
         let args = cross_arguments(
             &project,
             &config,
@@ -283,6 +427,61 @@ mod tests {
                 "--bin",
                 "helper"
             ]
+        );
+    }
+
+    #[test]
+    fn completed_clean_build_is_reused_only_for_the_same_fingerprint() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target_base = temporary.path().join("binstall-publisher");
+        let target_dir = target_base.join("build-complete");
+        let project = test_project(temporary.path().to_owned());
+        let config = test_config();
+        for binary in &project.binaries {
+            let path = target_dir
+                .join(&config.targets[0])
+                .join(&config.targets[0])
+                .join("release")
+                .join(policy::binary_filename(binary, &config.targets[0]));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, binary).unwrap();
+        }
+        let fingerprint = BuildFingerprint {
+            format_version: 1,
+            commit: "0123456789abcdef".into(),
+            package: project.name.clone(),
+            version: project.version.clone(),
+            binaries: project.binaries.clone(),
+            targets: config.targets.clone(),
+            profile: config.profile.clone(),
+            locked: config.locked,
+            engine: "podman".into(),
+            toolchain: Some("stable-x86_64-unknown-linux-gnu".into()),
+        };
+        let cache_path = target_base.join("release-build.json");
+        fs::write(
+            &cache_path,
+            serde_json::to_vec(&BuildCache {
+                fingerprint: fingerprint.clone(),
+                target_dir,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let outputs = cached_outputs(&target_base, &cache_path, &fingerprint, &project, &config)
+            .unwrap()
+            .unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].binaries.len(), 2);
+
+        let different = BuildFingerprint {
+            commit: "different".into(),
+            ..fingerprint
+        };
+        assert!(
+            cached_outputs(&target_base, &cache_path, &different, &project, &config)
+                .unwrap()
+                .is_none()
         );
     }
     #[test]

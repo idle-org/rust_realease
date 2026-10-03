@@ -46,6 +46,15 @@ pub struct Cli {
     pub prerelease: bool,
     #[arg(long)]
     pub replace_assets: bool,
+    /// Ignore a matching completed build and compile every release target again.
+    #[arg(long)]
+    pub recompile: bool,
+    /// Release notes text.
+    #[arg(long, short = 'm', conflicts_with = "message_file")]
+    pub message: Option<String>,
+    /// Read release notes from a UTF-8 file.
+    #[arg(long, value_name = "PATH", conflicts_with = "message")]
+    pub message_file: Option<PathBuf>,
     #[arg(long)]
     pub keep_workdir: bool,
     #[arg(long)]
@@ -94,6 +103,15 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             "--prepare-repo is a separate mode; omit --stop-after.".into(),
         ));
     }
+    let release_message = match args.message_file.as_deref() {
+        Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
+            Error(format!(
+                "cannot read release message file {}: {e}",
+                path.display()
+            ))
+        })?),
+        None => args.message.clone(),
+    };
     let acquisition_runner = Runner::new("GITEA_TOKEN").with_verbose(args.verbose);
     let checkout = project::acquire_project(
         &args.source,
@@ -317,7 +335,23 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         return Ok(());
     }
     let engine = engine.ok_or_else(|| Error("No usable Cross container backend.".into()))?;
-    let outputs = build::build(&checkout.root, &selected, &config, &engine, &runner)?;
+    let commit = project::head_commit(&checkout.root, &runner)?;
+    let checkout_clean = runner
+        .text(
+            "git",
+            &["status", "--porcelain", "--untracked-files=normal"],
+            &checkout.root,
+        )?
+        .is_empty();
+    let outputs = build::build(
+        &checkout.root,
+        &selected,
+        &config,
+        &engine,
+        checkout_clean.then_some(commit.as_str()),
+        args.recompile,
+        &runner,
+    )?;
     if args.stop_after == Some(Stage::Build) {
         return Ok(());
     }
@@ -345,10 +379,15 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     if args.stop_after == Some(Stage::Package) {
         return Ok(());
     }
-    let commit = project::head_commit(&checkout.root, &runner)?;
     let (api, private) =
         publication.ok_or_else(|| Error("Publication client was not initialized.".into()))?;
-    let release = api.ensure_release(&tag, &commit, args.draft, args.prerelease)?;
+    let release = api.ensure_release(
+        &tag,
+        &commit,
+        args.draft,
+        args.prerelease,
+        release_message.as_deref(),
+    )?;
     ui::success(format_args!("Release ready: {tag}"));
     if args.stop_after == Some(Stage::Release) {
         return Ok(());
@@ -476,5 +515,28 @@ mod tests {
             }
             assert!(Cli::try_parse_from(arguments).is_err());
         }
+    }
+
+    #[test]
+    fn release_message_inputs_and_recompile_flag_parse() {
+        let args = Cli::try_parse_from([
+            "rust_realease",
+            ".",
+            "--recompile",
+            "-m",
+            "Changes in this release",
+        ])
+        .unwrap();
+        assert!(args.recompile);
+        assert_eq!(args.message.as_deref(), Some("Changes in this release"));
+        assert!(Cli::try_parse_from([
+            "rust_realease",
+            ".",
+            "--message",
+            "inline",
+            "--message-file",
+            "notes.md",
+        ])
+        .is_err());
     }
 }

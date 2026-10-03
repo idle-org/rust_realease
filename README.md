@@ -8,18 +8,20 @@
 
 ## Install
 
-Install Rust and Cargo, Git, Cross, and Docker or Podman. Install cargo-binstall when producing the default `tgz` artifacts and running end-to-end install verification. A working container backend is needed for release builds.
+The preferred installation method is cargo-binstall, which downloads the matching prebuilt release artifact:
 
 ```bash
-cargo install --path . --locked
+cargo binstall --git https://proxy.dandaedre.com/gitea/idle-org/rust_realease \
+  rust_realease
 rust_realease --help
 ```
 
-The released `john-slop` binary can be installed directly from its Gitea repository with cargo-binstall:
+To build and publish releases, also install Git, Cross, and Docker or Podman. Install cargo-binstall itself when producing the default `tgz` artifacts and running end-to-end installation verification. A working container backend is needed for release builds.
+
+For development, or when a prebuilt artifact is unavailable for the host, install from this checkout:
 
 ```bash
-cargo binstall --git https://proxy.dandaedre.com/gitea/idle-org/john-slop \
-  john-slop
+cargo install --path . --locked
 ```
 
 To run from this checkout without installing, use `cargo run -- SOURCE [OPTIONS]`.
@@ -90,6 +92,8 @@ This runs host `cargo check` and `cargo test`, builds the selected targets with 
 
 Override the matrix with repeatable `--target TARGET` options. Use `--stop-after verify` for host checks alone.
 
+A completed Cross build from a clean checkout is reused automatically when the Git commit and build settings still match. Packaging is repeated so the upload always gets a newly validated artifact set. Pass `--recompile` to ignore the completed-build cache and build every target again. Dirty checkouts are never reused.
+
 Use `--artifact-format binary` when you only want raw executables, or `--artifact-format both` to publish raw executables alongside the default cargo-binstall archives:
 
 ```bash
@@ -109,6 +113,15 @@ printf '\n'
 export GITEA_TOKEN
 rust_realease ./my-tool
 ```
+
+Add release notes inline or read them from a UTF-8 file:
+
+```bash
+rust_realease ./my-tool -m "Highlights and upgrade notes"
+rust_realease ./my-tool --message-file CHANGELOG.md
+```
+
+The two message options are mutually exclusive. Supplying notes also updates the body when the tagged Gitea release already exists; omitting them preserves an existing body.
 
 To publish `rust_realease` itself, install the current publisher and use the
 repository wrapper. It reads the token from a file without placing it in the

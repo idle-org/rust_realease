@@ -1,6 +1,6 @@
 [package]
 name = "rust_realease"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 publish = false
 repository = "https://proxy.dandaedre.com/gitea/idle-org/rust_realease"

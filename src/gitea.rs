@@ -120,6 +120,7 @@ impl Gitea {
         commit: &str,
         draft: bool,
         prerelease: bool,
+        message: Option<&str>,
     ) -> Result<RemoteRelease, Error> {
         let encoded = encode(tag);
         let remote = self
@@ -134,19 +135,33 @@ impl Gitea {
                 "Remote tag commit differs from the checkout; refusing publication.".into(),
             ));
         }
-        let release = if let Some(existing) = self.request(
+        let (release, existed) = if let Some(existing) = self.request(
             Method::GET,
             &format!("/releases/tags/{encoded}"),
             None,
             true,
         )? {
-            existing
+            (existing, true)
         } else {
-            self.request(Method::POST, "/releases", Some(json!({"tag_name": tag, "name": tag, "target_commitish": commit, "draft": draft, "prerelease": prerelease})), false)?
-                .ok_or_else(|| Error("Gitea release creation returned no response.".into()))?
+            (
+                self.request(Method::POST, "/releases", Some(json!({"tag_name": tag, "name": tag, "target_commitish": commit, "draft": draft, "prerelease": prerelease, "body": message.unwrap_or_default()})), false)?
+                    .ok_or_else(|| Error("Gitea release creation returned no response.".into()))?,
+                false,
+            )
         };
-        serde_json::from_value(release)
-            .map_err(|_| Error("Gitea release response is missing id or draft state.".into()))
+        let release: RemoteRelease = serde_json::from_value(release)
+            .map_err(|_| Error("Gitea release response is missing id or draft state.".into()))?;
+        if existed {
+            if let Some(message) = message {
+                self.request(
+                    Method::PATCH,
+                    &format!("/releases/{}", release.id),
+                    Some(json!({"body": message})),
+                    false,
+                )?;
+            }
+        }
+        Ok(release)
     }
 
     pub fn repository_private(&self) -> Result<bool, Error> {
@@ -300,7 +315,10 @@ mod tests {
                     assert!(n > 0, "client closed before body");
                     bytes.extend_from_slice(&buffer[..n]);
                 }
-                requests.push(first);
+                requests.push(format!(
+                    "{first}\n{}",
+                    String::from_utf8_lossy(&bytes[header_end..header_end + length])
+                ));
                 let reason = if reply.status == 200 {
                     "OK"
                 } else if reply.status == 201 {
@@ -343,9 +361,13 @@ mod tests {
             },
         ]);
         let api = Gitea::with_token(&format!("{host}/gitea/team/demo"), "test-token").unwrap();
-        let release = api.ensure_release("v0.1.0", "abc", false, true).unwrap();
+        let release = api
+            .ensure_release("v0.1.0", "abc", false, true, Some("Release notes"))
+            .unwrap();
         assert_eq!(release.id, 7);
-        assert_eq!(handle.join().unwrap().len(), 3);
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[2].contains(r#""body":"Release notes""#));
 
         let (host, handle) = server(vec![
             Reply {
@@ -360,15 +382,23 @@ mod tests {
                 status: 200,
                 body: r#"{"id":9,"draft":true}"#,
             },
+            Reply {
+                method: "PATCH",
+                path: "/gitea/api/v1/repos/team/demo/releases/9",
+                status: 200,
+                body: r#"{"id":9,"draft":true}"#,
+            },
         ]);
         let api = Gitea::with_token(&format!("{host}/gitea/team/demo"), "test-token").unwrap();
         assert_eq!(
-            api.ensure_release("v0.1.0", "abc", false, false)
+            api.ensure_release("v0.1.0", "abc", false, false, Some("Updated notes"))
                 .unwrap()
                 .id,
             9
         );
-        assert_eq!(handle.join().unwrap().len(), 2);
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[2].contains(r#""body":"Updated notes""#));
         let _ = base;
     }
 
@@ -426,7 +456,7 @@ mod tests {
         }]);
         let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
         let error = api
-            .ensure_release("v0.1.0", "abc", false, false)
+            .ensure_release("v0.1.0", "abc", false, false, None)
             .unwrap_err()
             .to_string();
         assert!(error.contains("HTTP 401"));
@@ -448,7 +478,7 @@ mod tests {
             }]);
             let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
             let error = api
-                .ensure_release("v0.1.0", "abc", false, false)
+                .ensure_release("v0.1.0", "abc", false, false, None)
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(expected), "{error}");

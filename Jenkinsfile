@@ -46,7 +46,7 @@ pipeline {
 
                     mv coverage/tarpaulin-report.json coverage/summary.json
                     coverage_percent=$(sed -n \
-                        's/^.*],"coverage":\([0-9][0-9.]*\),"covered":[0-9][0-9]*,"coverable":[0-9][0-9]*}$/\1/p' \
+                        's/^.*],"coverage":\\([0-9][0-9.]*\\),"covered":[0-9][0-9]*,"coverable":[0-9][0-9]*}$/\\1/p' \
                         coverage/summary.json)
                     scripts/render-coverage-badge.sh \
                         "${coverage_percent}" \

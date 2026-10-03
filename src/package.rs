@@ -345,4 +345,48 @@ mod tests {
             assert!(package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Tgz,).is_err());
         }
     }
+
+    #[test]
+    fn rejects_missing_non_file_and_oversized_inputs() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        let outputs = [TargetOutputs {
+            target: "x86_64-unknown-linux-musl".into(),
+            binaries: vec![("demo".into(), missing.clone())],
+        }];
+        assert!(
+            package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Tgz)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot inspect binary")
+        );
+        assert!(checksum(&missing)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot open"));
+
+        let directory = temp.path().join("directory");
+        fs::create_dir(&directory).unwrap();
+        let outputs = [TargetOutputs {
+            target: "x86_64-unknown-linux-musl".into(),
+            binaries: vec![("demo".into(), directory)],
+        }];
+        assert!(
+            package(temp.path(), "demo", "0.1.0", &outputs, PackageFormat::Tgz)
+                .unwrap_err()
+                .to_string()
+                .contains("regular binary")
+        );
+
+        let mut output = Vec::new();
+        let long_name = format!("{}/{}", "p".repeat(156), "name");
+        assert!(write_header(&mut output, &long_name, 0o755, 0, b'0')
+            .unwrap_err()
+            .to_string()
+            .contains("USTAR limits"));
+        assert!(octal(&mut [0_u8; 2], u64::MAX)
+            .unwrap_err()
+            .to_string()
+            .contains("Tar field"));
+    }
 }

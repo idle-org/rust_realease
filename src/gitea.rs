@@ -508,4 +508,103 @@ mod tests {
             .to_string()
             .contains("HTTPS"));
     }
+
+    #[test]
+    fn constructor_rejects_missing_credentials_and_malformed_repositories() {
+        let missing = "RUST_REALEASE_TEST_TOKEN_THAT_IS_NOT_SET";
+        assert!(Gitea::new("https://example.com/team/demo", missing)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains(missing));
+        for repository in [
+            "://",
+            "mailto:demo@example.com",
+            "https://example.com/only-one",
+        ] {
+            assert!(
+                Gitea::with_token(repository, "token").is_err(),
+                "{repository}"
+            );
+        }
+        assert!(
+            Gitea::with_token("https://example.com/team/demo", "bad\ntoken")
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("token value")
+        );
+    }
+
+    #[test]
+    fn malformed_api_responses_and_upload_failures_are_reported() {
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/api/v1/repos/team/demo/tags/v0.1.0",
+            status: 200,
+            body: "not-json",
+        }]);
+        let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+        assert!(api
+            .ensure_release("v0.1.0", "abc", false, false, None)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid JSON"));
+        handle.join().unwrap();
+
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/api/v1/repos/team/demo",
+            status: 200,
+            body: "{}",
+        }]);
+        let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+        assert!(api.repository_private().is_err());
+        handle.join().unwrap();
+
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/api/v1/repos/team/demo/releases/7/assets",
+            status: 200,
+            body: "{}",
+        }]);
+        let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+        assert!(api.upload(7, &[Path::new("missing")], false).is_err());
+        handle.join().unwrap();
+
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/api/v1/repos/team/demo/releases/7/assets",
+            status: 200,
+            body: "[]",
+        }]);
+        let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+        assert!(api.upload(7, &[Path::new("missing")], false).is_err());
+        handle.join().unwrap();
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("asset.bin");
+        std::fs::write(&path, b"asset").unwrap();
+        let (host, handle) = server(vec![
+            Reply {
+                method: "GET",
+                path: "/api/v1/repos/team/demo/releases/7/assets",
+                status: 200,
+                body: "[]",
+            },
+            Reply {
+                method: "POST",
+                path: "/api/v1/repos/team/demo/releases/7/assets?name=asset.bin",
+                status: 401,
+                body: "{}",
+            },
+        ]);
+        let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
+        assert!(api
+            .upload(7, &[&path], false)
+            .unwrap_err()
+            .to_string()
+            .contains("HTTP 401"));
+        handle.join().unwrap();
+    }
 }

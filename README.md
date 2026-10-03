@@ -156,14 +156,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 ```
 
-Jenkins runs Cargo tests and enforces a 65% line-coverage floor. Run the exact
+Jenkins runs Cargo tests and enforces an 80% line-coverage floor. Run the exact
 coverage command locally with:
 
 ```bash
 cargo tarpaulin --config tarpaulin.toml --out Json --output-dir coverage
 ```
 
-The current suite measures 66.12% (1,046/1,582 lines). `Cargo.toml` is the
+The current suite measures 80.27% (1,351/1,683 lines). `Cargo.toml` is the
 authoritative version source. Jenkins temporarily renames Tarpaulin's JSON to
 `coverage/summary.json`, extracts and validates the overall percentage, renders
 badges locally, then removes the summary. It archives only

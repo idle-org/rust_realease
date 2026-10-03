@@ -448,13 +448,42 @@ mod tests {
             normalize_repository("https://example.com/gitea/owner/demo.git").unwrap(),
             "https://example.com/gitea/owner/demo"
         );
+        assert_eq!(
+            normalize_repository("https://example.com:8443/owner/demo").unwrap(),
+            "https://example.com:8443/owner/demo"
+        );
         for value in [
             "https://token@example.com/owner/demo",
             "https://example.com/owner/demo?token=secret",
             "https://example.com/owner/../demo",
+            "ftp://example.com/owner/demo",
+            "not a repository URL",
+            "git@:owner/demo",
+            "https://example.com/owner/.git",
         ] {
             assert!(normalize_repository(value).is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn local_source_and_inspection_errors_are_explicit() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("not-a-directory");
+        fs::write(&file, "content").unwrap();
+        let runner = Runner::new("GITEA_TOKEN");
+        assert!(
+            acquire_project(file.to_str().unwrap(), None, false, &runner)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("must be a directory")
+        );
+        assert!(
+            inspect(temp.path().join("missing").to_str().unwrap(), None, &runner,)
+                .unwrap_err()
+                .to_string()
+                .contains("requires a local project")
+        );
     }
 
     #[test]

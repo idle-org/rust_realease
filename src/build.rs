@@ -491,4 +491,62 @@ mod tests {
                 .unwrap();
         assert!(reject_hooks(&doc).is_err());
     }
+
+    #[test]
+    fn malformed_cross_configuration_and_missing_lockfile_are_reported() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(validate_cross_config(temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("cannot inspect"));
+
+        fs::write(temp.path().join("Cargo.toml"), "not valid toml = [").unwrap();
+        assert!(validate_cross_config(temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("invalid root"));
+
+        fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace.metadata.cross.target.demo]\nrunner = 'unsafe'\n",
+        )
+        .unwrap();
+        assert!(validate_cross_config(temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("runner"));
+
+        fs::write(temp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(temp.path().join("Cross.toml"), "invalid = [").unwrap();
+        assert!(validate_cross_config(temp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("invalid"));
+        fs::remove_file(temp.path().join("Cross.toml")).unwrap();
+
+        let config = test_config();
+        let (problems, engine) = prerequisites(
+            temp.path(),
+            &config,
+            false,
+            false,
+            &Runner::new("TEST_TOKEN"),
+        );
+        assert!(engine.is_none());
+        assert!(problems
+            .iter()
+            .any(|problem| problem.contains("Cargo.lock")));
+
+        let mut dev = test_config();
+        dev.profile = "dev".into();
+        dev.locked = false;
+        let args = cross_arguments(
+            &test_project(PathBuf::from("target")),
+            &dev,
+            "demo-target",
+            Path::new("target-dir"),
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--profile", "dev"]));
+        assert!(!args.contains(&"--locked".into()));
+    }
 }

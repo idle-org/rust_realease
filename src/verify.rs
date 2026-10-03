@@ -622,4 +622,124 @@ mod tests {
             "https://example.com/team/demo/releases/download/release%2B1/one.tgz"
         );
     }
+
+    #[test]
+    fn archive_validation_rejects_corrupt_metadata_and_payloads() {
+        let temp = tempfile::tempdir().unwrap();
+        let binary = temp.path().join("demo");
+        fs::write(&binary, b"binary").unwrap();
+        let (artifacts, _) = package::package(
+            temp.path(),
+            "demo",
+            "0.1.0",
+            &outputs("x86_64-unknown-linux-musl", binary),
+            PackageFormat::Tgz,
+        )
+        .unwrap();
+        let artifact = &artifacts[0];
+        let mut not_archive = artifact.clone();
+        not_archive.contents = ArtifactContents::Binary;
+        assert!(verify_archive(&artifact.path, &not_archive)
+            .unwrap_err()
+            .to_string()
+            .contains("is not an archive"));
+
+        let invalid_gzip = temp.path().join("invalid.tgz");
+        fs::write(&invalid_gzip, b"not gzip").unwrap();
+        assert!(verify_archive(&invalid_gzip, artifact)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid gzip"));
+
+        let mut valid_tar = Vec::new();
+        GzDecoder::new(File::open(&artifact.path).unwrap())
+            .read_to_end(&mut valid_tar)
+            .unwrap();
+        let write_tar = |name: &str, bytes: &[u8]| {
+            let path = temp.path().join(name);
+            let mut gzip = flate2::write::GzEncoder::new(
+                File::create(&path).unwrap(),
+                flate2::Compression::default(),
+            );
+            gzip.write_all(bytes).unwrap();
+            gzip.finish().unwrap();
+            path
+        };
+        let truncated = write_tar("truncated.tgz", &[0; 1024]);
+        assert!(verify_archive(&truncated, artifact)
+            .unwrap_err()
+            .to_string()
+            .contains("truncated tar"));
+
+        for (name, index, byte, expected) in [
+            ("root.tgz", 0, b'x', "archive root"),
+            ("binary.tgz", 512, b'x', "archive binary"),
+            ("utf8.tgz", 0, 0xff, "non-UTF-8"),
+            ("numeric.tgz", 512 + 100, b'x', "numeric field"),
+        ] {
+            let mut corrupt = valid_tar.clone();
+            corrupt[index] = byte;
+            let path = write_tar(name, &corrupt);
+            let error = verify_archive(&path, artifact).unwrap_err().to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+
+        let mut non_executable = valid_tar;
+        non_executable[512 + 100..512 + 108].copy_from_slice(b"0000644\0");
+        let path = write_tar("mode.tgz", &non_executable);
+        assert!(verify_archive(&path, artifact)
+            .unwrap_err()
+            .to_string()
+            .contains("not executable"));
+    }
+
+    #[test]
+    fn published_verification_rejects_http_size_and_checksum_failures() {
+        use std::{net::TcpListener, thread};
+
+        let temp = tempfile::tempdir().unwrap();
+        let local = temp.path().join("demo.bin");
+        let sums = temp.path().join("SHA256SUMS");
+        fs::write(&local, b"local").unwrap();
+        fs::write(&sums, b"unused").unwrap();
+        let artifact = Artifact {
+            target: "x86_64-unknown-linux-musl".into(),
+            path: local,
+            contents: ArtifactContents::Binary,
+            sha256: String::new(),
+        };
+
+        for (status, body, expected) in [
+            (404, b"missing".as_slice(), "HTTP 404"),
+            (200, b"too-long".as_slice(), "exceeds expected size"),
+            (200, b"wrong".as_slice(), "SHA-256 differs"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let repository = format!("http://{}/team/demo", listener.local_addr().unwrap());
+            let response_body = body.to_vec();
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request).unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Result\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response_body.len()
+                )
+                .unwrap();
+                stream.write_all(&response_body).unwrap();
+            });
+            let error = verify_published(
+                &repository,
+                "v0.1.0",
+                std::slice::from_ref(&artifact),
+                &sums,
+                None,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(expected), "{error}");
+            handle.join().unwrap();
+        }
+    }
 }

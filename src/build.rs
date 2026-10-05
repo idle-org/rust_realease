@@ -45,12 +45,14 @@ pub fn prerequisites(
     }
     for tool in ["git", "cargo"]
         .into_iter()
-        .chain(needs_cross.then_some("cross"))
         .chain(needs_binstall.then_some("cargo-binstall"))
     {
         if executable(tool).is_none() {
             problems.push(format!("{tool} is missing"));
         }
+    }
+    if needs_cross && cross_program().is_none() {
+        problems.push("cross is missing (looked for cross and cargo-cross)".into());
     }
     let mut engine = None;
     if needs_cross {
@@ -84,9 +86,24 @@ pub fn prerequisites(
 
 fn executable(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
-    env::split_paths(&path)
+    executable_in(name, &path)
+}
+
+fn executable_in(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    env::split_paths(path)
         .map(|dir| dir.join(name))
         .find(|path| path.is_file())
+}
+
+fn cross_program() -> Option<&'static str> {
+    let path = env::var_os("PATH")?;
+    cross_program_in(&path)
+}
+
+fn cross_program_in(path: &std::ffi::OsStr) -> Option<&'static str> {
+    ["cross", "cargo-cross"]
+        .into_iter()
+        .find(|name| executable_in(name, path).is_some())
 }
 
 fn validate_cross_config(root: &Path) -> Result<(), Error> {
@@ -239,6 +256,8 @@ pub fn build(
         &config.profile
     };
     let mut outputs = Vec::new();
+    let cross = cross_program()
+        .ok_or_else(|| Error("cross is missing (looked for cross and cargo-cross)".into()))?;
     let builds_started = Instant::now();
     for target in &config.targets {
         println!("Building {target}");
@@ -249,7 +268,7 @@ pub fn build(
         let target_build_dir = target_dir.join(target);
         let args = cross_arguments(project, config, target, &target_build_dir);
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        runner.output_with("cross", &borrowed, root, &environment, &[])?;
+        runner.output_with(cross, &borrowed, root, &environment, &[])?;
         let mut binaries = Vec::new();
         for name in &project.binaries {
             let binary = target_build_dir
@@ -376,6 +395,18 @@ fn short_commit(commit: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_command_falls_back_to_cargo_cross() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = env::join_paths([temp.path()]).unwrap();
+
+        fs::write(temp.path().join("cargo-cross"), "").unwrap();
+        assert_eq!(cross_program_in(&path), Some("cargo-cross"));
+
+        fs::write(temp.path().join("cross"), "").unwrap();
+        assert_eq!(cross_program_in(&path), Some("cross"));
+    }
 
     fn test_project(target_directory: PathBuf) -> SelectedPackage {
         SelectedPackage {

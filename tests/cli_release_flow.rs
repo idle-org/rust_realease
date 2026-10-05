@@ -88,7 +88,7 @@ fn compile_only_reuses_clean_commit_and_rebuilds_changed_or_forced_inputs() {
     executable(&fake_bin.join("docker"), "#!/bin/sh\n[ \"$1\" = info ]\n");
     executable(&fake_bin.join("cargo-binstall"), "#!/bin/sh\nexit 0\n");
     executable(
-        &fake_bin.join("cross"),
+        &fake_bin.join("cargo-cross"),
         "#!/bin/sh\n\
          set -eu\n\
          target=\n\

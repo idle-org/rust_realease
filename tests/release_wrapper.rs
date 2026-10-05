@@ -110,3 +110,56 @@ fn release_wrapper_passes_the_token_file_and_preserves_the_ssh_origin() {
     assert!(arguments.lines().any(|argument| argument == "--dry-run"));
     assert!(!arguments.lines().any(|argument| argument == "--prerelease"));
 }
+
+#[test]
+fn release_wrapper_builds_without_a_token_file() {
+    let temporary = TempDir::new().expect("temporary directory should be created");
+    let repository = temporary.path().join("repository");
+    let fake_bin = temporary.path().join("bin");
+    fs::create_dir_all(&repository).expect("repository directory should be created");
+    fs::create_dir_all(&fake_bin).expect("fake binary directory should be created");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("release.sh"),
+        repository.join("release.sh"),
+    )
+    .expect("release wrapper should be copied");
+    fs::write(
+        repository.join("Cargo.toml"),
+        "[package]\nname = \"rust_realease\"\nversion = \"0.1.3\"\n",
+    )
+    .expect("manifest should be written");
+
+    let fake_release = fake_bin.join("rust_realease");
+    fs::write(
+        &fake_release,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >\"$OBSERVED_ARGS\"\n",
+    )
+    .expect("fake release executable should be written");
+    for path in [&fake_release, &repository.join("release.sh")] {
+        let mut permissions = fs::metadata(path)
+            .expect("script metadata should be readable")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("script should be executable");
+    }
+
+    let observed_args = temporary.path().join("observed-args.txt");
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").expect("PATH should be available")
+    );
+    let output = run(Command::new(repository.join("release.sh"))
+        .arg("--compile-only")
+        .env("PATH", path)
+        .env("OBSERVED_ARGS", &observed_args)
+        .env_remove("GITEA_TOKEN"));
+
+    assert!(output.status.success());
+    let arguments =
+        fs::read_to_string(&observed_args).expect("fake release should record publisher arguments");
+    assert!(arguments
+        .lines()
+        .any(|argument| argument == "--compile-only"));
+    assert!(!arguments.lines().any(|argument| argument == "--token-file"));
+}

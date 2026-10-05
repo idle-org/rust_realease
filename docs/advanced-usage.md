@@ -94,7 +94,7 @@ For repositories whose build scripts need a selected Rust toolchain inside Cross
 
 ## Pipeline stages
 
-`--compile-only` runs through the package stage and then stops: it performs host checks, cross-compiles, and writes local artifacts without creating or uploading a release. It is the explicit artifact-build mode and conflicts with `--dry-run`, `--prepare-repo`, and `--stop-after`.
+`--compile-only` runs through the package stage and then stops: it performs host checks, cross-compiles, and writes local artifacts without requiring a Gitea token or creating or uploading a release. It is the explicit artifact-build mode and conflicts with `--dry-run`, `--prepare-repo`, and `--stop-after`. For this repository, `./release.sh --compile-only` provides the same token-free path; a later `./release.sh TOKEN_FILE` publication reuses the completed build when its fingerprint still matches.
 
 `--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. A successful Cross build from a clean checkout records its Git commit, package, targets, profile, lock mode, container engine, active Rust toolchain, and binary list. A later run with the same inputs reuses those regular binary files from Cargo's target directory; dirty checkouts, changed inputs, missing files, and invalid cache records build in a fresh target directory instead. `--recompile` explicitly bypasses a matching completed build. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously for public repositories or with Gitea authentication for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for public targets. `--skip-binstall-test` skips that install check, while retaining download verification.
 
@@ -123,11 +123,11 @@ Normal publication does not create a commit, tag, or push. Existing asset names 
 
 Install the publisher from the checkout, then use the repository wrapper. The
 wrapper selects this package, publishes both archive and standalone binary
-assets, and forwards its token file to `--token-file`:
+assets, and forwards its token file to `--token-file` when publishing:
 
 ```bash
 cargo install --path . --locked
-./release.sh ../gitea_token.txt --compile-only
+./release.sh --compile-only
 ./release.sh ../gitea_token.txt --dry-run
 ./release.sh ../gitea_token.txt
 ```

@@ -44,7 +44,8 @@ fn publisher(project: &Path, fake_bin: &Path, cross_log: &Path, arguments: &[&st
         .arg(project)
         .args(arguments)
         .env("PATH", path)
-        .env("CROSS_LOG", cross_log))
+        .env("CROSS_LOG", cross_log)
+        .env_remove("GITEA_TOKEN"))
 }
 
 fn assert_success(output: &Output) -> String {

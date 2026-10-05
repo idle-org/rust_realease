@@ -54,7 +54,10 @@ Build local artifacts through the package stage with:
 rust_realease ./my-tool --compile-only
 ```
 
-Artifacts and `SHA256SUMS` are written under `dist/release-*/`.
+This mode does not require a Gitea token or contact Gitea. Artifacts and
+`SHA256SUMS` are written under `dist/release-*/`. A later publication with the
+same clean commit and build settings reuses the completed target builds; pass
+`--recompile` to rebuild them instead.
 
 ## Publish a Gitea release
 

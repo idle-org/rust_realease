@@ -86,6 +86,9 @@ tag, push, release-note, private-repository, and asset-replacement workflows.
 - [Advanced usage](docs/advanced-usage.md) covers sources, configuration,
   metadata preparation, pipeline stages, artifact formats, authentication,
   this repository's release procedure, and troubleshooting.
+- [Cross configuration](docs/advanced-usage.md#cross-configuration) explains
+  target images, environment passthrough, and global or target-specific
+  `pre-build` commands for native build dependencies.
 - `rust_realease --help` is the complete option reference.
 
 ## Development

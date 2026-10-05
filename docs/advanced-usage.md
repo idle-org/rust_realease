@@ -75,6 +75,77 @@ fallback-url = "https://proxy.dandaedre.com/gitea/idle-org/john-slop"
 
 URLs are normalized, including removal of a trailing `.git`; SCP-style and SSH URLs normalize to HTTPS. The scheme remains significant for HTTP(S), so add separate rules if the same origin is used through both HTTP and SSH. Each rule matches one repository, not an entire host. The fallback must use HTTPS because it becomes the Gitea API and public download base. It is also written to `package.repository` during metadata repair. Git continues to clone and push through `origin`; the mapping tells the safety checks that the internal and public repositories are equivalent.
 
+## Cross configuration
+
+`rust_realease` runs Cross from the acquired project root, once for every
+target in `build.targets` (or supplied with `--target`). Put `Cross.toml` in
+that root to configure the container builds. Cross also accepts equivalent
+settings below `[workspace.metadata.cross]` in the root `Cargo.toml`; when both
+are present, `Cross.toml` takes precedence. Cross environment variables take
+precedence over both. See the
+[Cross configuration reference](https://github.com/cross-rs/cross/blob/main/docs/config_file.md)
+for every setting supported by Cross.
+
+This repository uses the following configuration:
+
+```toml
+[build]
+pre-build = [
+    "apt-get update && apt-get install --assume-yes --no-install-recommends libudev-dev pkg-config",
+]
+
+[build.env]
+passthrough = ["RUSTUP_TOOLCHAIN"]
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:main"
+```
+
+The tables have distinct jobs:
+
+- `[build]` applies defaults to every target. Its `pre-build` commands run
+  while Cross constructs a derived container image, before Cargo builds the
+  package. Commands run as container-image build steps and must be valid for
+  every configured base image.
+- `[build.env]` controls the environment exposed to builds. The
+  `RUSTUP_TOOLCHAIN` passthrough keeps a caller-selected toolchain available
+  inside Cross. Add only variables the container build actually needs.
+- `[target.TRIPLE]` selects settings for one target. Here, each `image` pins
+  the corresponding image repository to its `main` tag.
+
+For a dependency needed by only one target, put `pre-build` on that target
+instead of under `[build]`:
+
+```toml
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install --assume-yes --no-install-recommends libudev-dev:$CROSS_DEB_ARCH pkg-config",
+]
+```
+
+Cross supplies `CROSS_DEB_ARCH` when it builds a custom image, which avoids
+hard-coding Debian architecture names. A target-specific `pre-build` may also
+name an executable script relative to the workspace root when a list of shell
+commands becomes unwieldy. Treat all `pre-build` content as trusted code: it
+is executed by the container engine. `rust_realease` accepts `pre-build` in
+both supported configuration locations, validates the TOML, and leaves the
+commands for Cross to execute. Custom `dockerfile` and `runner` options remain
+unsupported by the publisher.
+
+`--prepare-repo` creates `Cross.toml` when necessary and preserves existing
+settings. It always ensures `RUSTUP_TOOLCHAIN` is in
+`build.env.passthrough`; `--cross-image-tag TAG` additionally writes the image
+for every configured release target. Add project-specific `pre-build`
+commands directly to `Cross.toml` and commit them like other build inputs.
+
 ## Metadata and preparation
 
 The publisher checks the selected member's repository and, when archives are enabled, its cargo-binstall metadata. `--fix-metadata` repairs supported entries in that member's `Cargo.toml` while preserving comments where practical. It does not commit, tag, or push. To preview the full preparation diff, use `--prepare-repo --dry-run`.
@@ -90,11 +161,11 @@ bin-dir = "{ name }-{ target }-v{ version }/{ bin }{ binary-ext }"
 
 The generated `pkg-url` uses the configured tag prefix; the archive filename itself retains `-v{version}`. Unsupported binstall keys are reported as metadata conflicts. A preparation run may create one extra fix commit, as intended. `--commit-preparation` requires a clean worktree and index. `--create-tag` requires that commit option, and `--push-preparation` requires both. No option moves an existing tag or force pushes.
 
-For repositories whose build scripts need a selected Rust toolchain inside Cross, preparation can add the supported `Cross.toml` environment setting. `--cross-image-tag TAG` explicitly selects `ghcr.io/cross-rs/TARGET:TAG` images. Existing unrelated Cross settings are preserved. Repository-provided Cross hooks such as `pre-build`, `dockerfile`, and `runner` are rejected by the release build.
+For repositories whose build scripts need a selected Rust toolchain inside Cross, preparation can add the supported `Cross.toml` environment setting. `--cross-image-tag TAG` explicitly selects `ghcr.io/cross-rs/TARGET:TAG` images. Existing unrelated Cross settings, including `pre-build`, are preserved.
 
 ## Pipeline stages
 
-`--compile-only` runs through the package stage and then stops: it performs host checks, cross-compiles, and writes local artifacts without requiring a Gitea token or creating or uploading a release. It is the explicit artifact-build mode and conflicts with `--dry-run`, `--prepare-repo`, and `--stop-after`. For this repository, `./release.sh --compile-only` provides the same token-free path; a later `./release.sh TOKEN_FILE` publication reuses the completed build when its fingerprint still matches.
+`--compile-only` runs through the package stage and then stops: it performs host checks, cross-compiles, and writes local artifacts without requiring a Gitea token or creating or uploading a release. It is the explicit artifact-build mode and conflicts with `--dry-run`, `--prepare-repo`, and `--stop-after`. A later publication from the same clean commit reuses the completed build when its fingerprint still matches.
 
 `--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. A successful Cross build from a clean checkout records its Git commit, package, targets, profile, lock mode, container engine, active Rust toolchain, and binary list. A later run with the same inputs reuses those regular binary files from Cargo's target directory; dirty checkouts, changed inputs, missing files, and invalid cache records build in a fresh target directory instead. `--recompile` explicitly bypasses a matching completed build. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously for public repositories or with Gitea authentication for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for public targets. `--skip-binstall-test` skips that install check, while retaining download verification.
 
@@ -121,16 +192,22 @@ Normal publication does not create a commit, tag, or push. Existing asset names 
 
 ## Releasing this repository
 
-Install the publisher from the checkout, then use the repository wrapper. The
-wrapper selects this package, publishes both archive and standalone binary
-assets, and forwards its token file to `--token-file` when publishing:
+Install the publisher from the checkout, then invoke it directly. This
+repository publishes both archive and standalone binary assets. Its current
+version is a release candidate, so publication also uses `--prerelease`:
 
 ```bash
 cargo install --path . --locked
-./release.sh --compile-only
-./release.sh ../gitea_token.txt --dry-run
-./release.sh ../gitea_token.txt
+rust_realease . --package rust_realease --artifact-format both --compile-only
+rust_realease . --package rust_realease --artifact-format both \
+  --token-file ../gitea_token.txt --prerelease --dry-run
+rust_realease . --package rust_realease --artifact-format both \
+  --token-file ../gitea_token.txt --prerelease
 ```
+
+Omit `--prerelease` for a stable version. The token-free compile command can
+run first; a later publication reuses its completed build when the commit and
+build inputs still match.
 
 ## CI badge pipeline
 

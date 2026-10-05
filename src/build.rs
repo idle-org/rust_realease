@@ -118,7 +118,7 @@ fn validate_cross_config(root: &Path) -> Result<(), Error> {
         .and_then(|value| value.get("metadata"))
         .and_then(|value| value.get("cross"))
     {
-        reject_hooks(cross)?;
+        reject_unsupported_options(cross)?;
     }
     let path = root.join("Cross.toml");
     if path.exists() {
@@ -126,24 +126,24 @@ fn validate_cross_config(root: &Path) -> Result<(), Error> {
             .map_err(|e| Error(format!("cannot read {}: {e}", path.display())))?;
         let cross: toml::Value = toml::from_str(&source)
             .map_err(|e| Error(format!("invalid {}: {e}", path.display())))?;
-        reject_hooks(&cross)?;
+        reject_unsupported_options(&cross)?;
     }
     Ok(())
 }
 
-fn reject_hooks(value: &toml::Value) -> Result<(), Error> {
+fn reject_unsupported_options(value: &toml::Value) -> Result<(), Error> {
     match value {
         toml::Value::Table(table) => {
             for (key, child) in table {
-                if matches!(key.as_str(), "pre-build" | "dockerfile" | "runner") {
+                if matches!(key.as_str(), "dockerfile" | "runner") {
                     return Err(Error(format!("Repository cross configuration contains unsupported executable option {key:?}.")));
                 }
-                reject_hooks(child)?;
+                reject_unsupported_options(child)?;
             }
         }
         toml::Value::Array(array) => {
             for child in array {
-                reject_hooks(child)?;
+                reject_unsupported_options(child)?;
             }
         }
         _ => (),
@@ -520,11 +520,17 @@ mod tests {
         );
     }
     #[test]
-    fn cross_hooks_are_rejected() {
+    fn cross_pre_build_is_allowed_but_other_executable_options_are_rejected() {
         let doc: toml::Value =
-            toml::from_str("[target.x86_64-unknown-linux-musl]\npre-build=['echo unsafe']")
+            toml::from_str("[target.x86_64-unknown-linux-musl]\npre-build=['apt-get update']")
                 .unwrap();
-        assert!(reject_hooks(&doc).is_err());
+        assert!(reject_unsupported_options(&doc).is_ok());
+
+        for option in ["dockerfile = 'Dockerfile'", "runner = 'custom-runner'"] {
+            let doc: toml::Value =
+                toml::from_str(&format!("[target.x86_64-unknown-linux-musl]\n{option}")).unwrap();
+            assert!(reject_unsupported_options(&doc).is_err());
+        }
     }
 
     #[test]
@@ -543,7 +549,7 @@ mod tests {
 
         fs::write(
             temp.path().join("Cargo.toml"),
-            "[workspace.metadata.cross.target.demo]\nrunner = 'unsafe'\n",
+            "[workspace.metadata.cross.target.demo]\nrunner = 'custom-runner'\n",
         )
         .unwrap();
         assert!(validate_cross_config(temp.path())
@@ -552,6 +558,13 @@ mod tests {
             .contains("runner"));
 
         fs::write(temp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(
+            temp.path().join("Cross.toml"),
+            "[build]\npre-build = ['apt-get update']\n",
+        )
+        .unwrap();
+        validate_cross_config(temp.path()).unwrap();
+
         fs::write(temp.path().join("Cross.toml"), "invalid = [").unwrap();
         assert!(validate_cross_config(temp.path())
             .unwrap_err()

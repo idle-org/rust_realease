@@ -101,9 +101,11 @@ fn cross_program() -> Option<&'static str> {
 }
 
 fn cross_program_in(path: &std::ffi::OsStr) -> Option<&'static str> {
-    ["cross", "cargo-cross"]
-        .into_iter()
-        .find(|name| executable_in(name, path).is_some())
+    env::split_paths(path).find_map(|directory| {
+        ["cross", "cargo-cross"]
+            .into_iter()
+            .find(|name| directory.join(name).is_file())
+    })
 }
 
 fn validate_cross_config(root: &Path) -> Result<(), Error> {
@@ -397,14 +399,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cross_command_falls_back_to_cargo_cross() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = env::join_paths([temp.path()]).unwrap();
+    fn cross_command_honors_path_order_and_falls_back_to_cargo_cross() {
+        let first = tempfile::tempdir().unwrap();
+        let later = tempfile::tempdir().unwrap();
+        let path = env::join_paths([first.path(), later.path()]).unwrap();
 
-        fs::write(temp.path().join("cargo-cross"), "").unwrap();
+        fs::write(first.path().join("cargo-cross"), "").unwrap();
+        fs::write(later.path().join("cross"), "").unwrap();
         assert_eq!(cross_program_in(&path), Some("cargo-cross"));
 
-        fs::write(temp.path().join("cross"), "").unwrap();
+        fs::write(first.path().join("cross"), "").unwrap();
         assert_eq!(cross_program_in(&path), Some("cross"));
     }
 

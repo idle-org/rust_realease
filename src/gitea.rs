@@ -43,7 +43,7 @@ impl Gitea {
         Self::with_token(repository, &token)
     }
 
-    fn with_token(repository: &str, token: &str) -> Result<Self, Error> {
+    pub(crate) fn with_token(repository: &str, token: &str) -> Result<Self, Error> {
         let parsed = url::Url::parse(repository)
             .map_err(|_| Error("Invalid release repository URL.".into()))?;
         let parts: Vec<_> = parsed

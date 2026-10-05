@@ -4,6 +4,7 @@ use std::{path::Path, process::Command, sync::OnceLock};
 
 pub struct Runner {
     token_env: String,
+    secrets: Vec<String>,
     verbose: bool,
 }
 
@@ -11,8 +12,16 @@ impl Runner {
     pub fn new(token_env: &str) -> Self {
         Self {
             token_env: token_env.to_owned(),
+            secrets: Vec::new(),
             verbose: false,
         }
+    }
+
+    pub fn with_secret(mut self, secret: Option<&str>) -> Self {
+        if let Some(secret) = secret.filter(|secret| !secret.is_empty()) {
+            self.secrets.push(secret.to_owned());
+        }
+        self
     }
 
     pub fn with_verbose(mut self, verbose: bool) -> Self {
@@ -86,6 +95,9 @@ impl Runner {
 
     pub fn redact(&self, text: &str) -> String {
         let mut without_token = text.to_owned();
+        for secret in &self.secrets {
+            without_token = without_token.replace(secret, "[REDACTED]");
+        }
         for name in ["GITEA_TOKEN", self.token_env.as_str()] {
             if let Ok(secret) = std::env::var(name) {
                 if !secret.is_empty() {
@@ -107,13 +119,15 @@ mod tests {
     use super::*;
     #[test]
     fn redacts_token_and_urls_and_keeps_token_out_of_child() {
-        let runner = Runner::new("RUST_RELEASE_TEST_SECRET");
+        let runner =
+            Runner::new("RUST_RELEASE_TEST_SECRET").with_secret(Some("token-loaded-from-file"));
         let secret = "unit-test-secret-value";
         std::env::set_var("RUST_RELEASE_TEST_SECRET", secret);
         let message = runner
             .redact("failed https://user:password@example.com/repo and unit-test-secret-value");
         assert!(!message.contains(secret));
         assert!(!message.contains("password"));
+        assert_eq!(runner.redact("token-loaded-from-file"), "[REDACTED]");
         let child = runner.text("env", &[], Path::new(".")).unwrap();
         assert!(!child.contains("RUST_RELEASE_TEST_SECRET"));
         std::env::set_var("RUST_RELEASE_TEST_REMOVED", "remove-me");

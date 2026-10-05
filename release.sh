@@ -20,14 +20,6 @@ if ! command -v rust_realease >/dev/null 2>&1; then
     exit 2
 fi
 
-GITEA_TOKEN=
-IFS= read -r GITEA_TOKEN <"$token_file" || :
-if [ -z "$GITEA_TOKEN" ]; then
-    echo "token file is empty: $token_file" >&2
-    exit 2
-fi
-export GITEA_TOKEN
-
 repository_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 manifest_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repository_dir/Cargo.toml" | head -n 1)
 
@@ -35,6 +27,7 @@ set -- \
     "$repository_dir" \
     --package rust_realease \
     --artifact-format both \
+    --token-file "$token_file" \
     "$@"
 case "$manifest_version" in
     *-*) set -- "$@" --prerelease ;;

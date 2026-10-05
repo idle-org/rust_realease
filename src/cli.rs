@@ -79,6 +79,9 @@ pub struct Cli {
     pub cross_image_tag: Option<String>,
     #[arg(long)]
     pub repository_url: Option<String>,
+    /// Read the Gitea access token from a UTF-8 file instead of the configured environment variable.
+    #[arg(long, value_name = "PATH")]
+    pub token_file: Option<PathBuf>,
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// Release tgz archives, raw binaries, or both.
@@ -112,7 +115,14 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         })?),
         None => args.message.clone(),
     };
-    let acquisition_runner = Runner::new("GITEA_TOKEN").with_verbose(args.verbose);
+    let file_token = args
+        .token_file
+        .as_deref()
+        .map(read_token_file)
+        .transpose()?;
+    let acquisition_runner = Runner::new("GITEA_TOKEN")
+        .with_secret(file_token.as_deref())
+        .with_verbose(args.verbose);
     let checkout = project::acquire_project(
         &args.source,
         if args.prepare_repo {
@@ -134,7 +144,9 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             package_format: args.artifact_format,
         },
     )?;
-    let runner = Runner::new(&config.token_env).with_verbose(args.verbose);
+    let runner = Runner::new(&config.token_env)
+        .with_secret(file_token.as_deref())
+        .with_verbose(args.verbose);
     let root = checkout
         .root
         .to_str()
@@ -233,6 +245,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             prepare::Options {
                 tag: &tag,
                 image_tag: args.cross_image_tag.as_deref(),
+                token: file_token.as_deref(),
                 dry_run: args.dry_run,
                 commit: args.commit_preparation,
                 create_tag: args.create_tag,
@@ -292,7 +305,10 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             .is_none_or(|stage| stage.order() >= Stage::Binstall.order());
     let publication = if publishing {
         project::validate_checkout_tag(&checkout.root, &tag, &runner)?;
-        let api = Gitea::new(&repository, &config.token_env)?;
+        let api = match file_token.as_deref() {
+            Some(token) => Gitea::with_token(&repository, token)?,
+            None => Gitea::new(&repository, &config.token_env)?,
+        };
         let private = api.repository_private()?;
         if private && needs_binstall {
             return Err(Error("This repository is private; cargo-binstall cannot verify its private release downloads. Rerun with --skip-binstall-test to verify uploaded assets with Gitea authentication.".into()));
@@ -419,6 +435,37 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     Ok(())
 }
 
+fn read_token_file(path: &std::path::Path) -> Result<String, Error> {
+    if !path.is_file() {
+        return Err(Error(format!(
+            "Gitea token file is not a regular file: {}",
+            path.display()
+        )));
+    }
+    let mut token = std::fs::read_to_string(path).map_err(|e| {
+        Error(format!(
+            "cannot read Gitea token file {}: {e}",
+            path.display()
+        ))
+    })?;
+    while token.ends_with(['\r', '\n']) {
+        token.pop();
+    }
+    if token.is_empty() {
+        return Err(Error(format!(
+            "Gitea token file is empty: {}",
+            path.display()
+        )));
+    }
+    if token.contains(['\r', '\n']) {
+        return Err(Error(format!(
+            "Gitea token file must contain exactly one token: {}",
+            path.display()
+        )));
+    }
+    Ok(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +585,29 @@ mod tests {
             "notes.md",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn token_file_accepts_one_token_and_trailing_newlines() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("token");
+        fs::write(&path, "secret-token\r\n").unwrap();
+        assert_eq!(read_token_file(&path).unwrap(), "secret-token");
+
+        fs::write(&path, "first\nsecond\n").unwrap();
+        assert!(read_token_file(&path).is_err());
+        fs::write(&path, "\n").unwrap();
+        assert!(read_token_file(&path).is_err());
+    }
+
+    #[test]
+    fn token_file_option_parses_as_a_path() {
+        let args =
+            Cli::try_parse_from(["rust_realease", ".", "--token-file", "secrets/gitea-token"])
+                .unwrap();
+        assert_eq!(
+            args.token_file.as_deref(),
+            Some(Path::new("secrets/gitea-token"))
+        );
     }
 }

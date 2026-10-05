@@ -15,6 +15,7 @@ use toml_edit::{value, Array, DocumentMut, Item, Table};
 pub struct Options<'a> {
     pub tag: &'a str,
     pub image_tag: Option<&'a str>,
+    pub token: Option<&'a str>,
     pub dry_run: bool,
     pub commit: bool,
     pub create_tag: bool,
@@ -354,7 +355,15 @@ pub fn run(
         project::validate_checkout_tag(root, options.tag, runner)?;
     }
     if let Some(branch) = branch {
-        push_preparation(root, &branch, options.tag, repository, config, runner)?;
+        push_preparation(
+            root,
+            &branch,
+            options.tag,
+            repository,
+            config,
+            options.token,
+            runner,
+        )?;
     }
     println!("Repository preparation complete. Review the changes, then run the publisher without --prepare-repo.");
     Ok(())
@@ -366,6 +375,7 @@ fn push_preparation(
     tag: &str,
     repository: &str,
     config: &Config,
+    token: Option<&str>,
     runner: &Runner,
 ) -> Result<(), Error> {
     let origin = runner.text("git", &["remote", "get-url", "--push", "origin"], root)?;
@@ -375,50 +385,53 @@ fn push_preparation(
     let branch_ref = format!("HEAD:refs/heads/{branch}");
     let tag_ref = format!("refs/tags/{tag}");
     if origin.starts_with("https://") {
-        if let Ok(token) = std::env::var(&config.token_env) {
-            if !token.is_empty() {
-                let helper = tempfile::Builder::new()
-                    .prefix("rust-release-askpass-")
-                    .tempdir()
-                    .map_err(|e| Error(format!("cannot create askpass helper: {e}")))?;
-                let script = helper.path().join("askpass");
-                fs::write(&script, "#!/bin/sh\ncase \"$1\" in *sername*) printf 'token\\n';; *) printf '%s\\n' \"$PUBLISHER_GIT_TOKEN\";; esac\n").map_err(|e| Error(format!("cannot write askpass helper: {e}")))?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&script, fs::Permissions::from_mode(0o700))
-                        .map_err(|e| Error(format!("cannot chmod askpass helper: {e}")))?;
-                }
-                let helper_path = script
-                    .to_str()
-                    .ok_or_else(|| Error("Askpass helper path is not UTF-8.".into()))?;
-                return runner
-                    .output_with(
-                        "git",
-                        &[
-                            "-c",
-                            "credential.helper=",
-                            "-c",
-                            "core.hooksPath=/dev/null",
-                            "push",
-                            "--atomic",
-                            "origin",
-                            &branch_ref,
-                            &tag_ref,
-                        ],
-                        root,
-                        &[
-                            ("GIT_ASKPASS", helper_path),
-                            ("GIT_TERMINAL_PROMPT", "0"),
-                            ("PUBLISHER_GIT_TOKEN", &token),
-                            ("GIT_TRACE", "0"),
-                            ("GIT_TRACE_CURL", "0"),
-                            ("GIT_TRACE2", "0"),
-                        ],
-                        &[],
-                    )
-                    .map(|_| ());
+        let environment_token = std::env::var(&config.token_env).ok();
+        if let Some(token) = token.or_else(|| {
+            environment_token
+                .as_deref()
+                .filter(|token| !token.is_empty())
+        }) {
+            let helper = tempfile::Builder::new()
+                .prefix("rust-release-askpass-")
+                .tempdir()
+                .map_err(|e| Error(format!("cannot create askpass helper: {e}")))?;
+            let script = helper.path().join("askpass");
+            fs::write(&script, "#!/bin/sh\ncase \"$1\" in *sername*) printf 'token\\n';; *) printf '%s\\n' \"$PUBLISHER_GIT_TOKEN\";; esac\n").map_err(|e| Error(format!("cannot write askpass helper: {e}")))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&script, fs::Permissions::from_mode(0o700))
+                    .map_err(|e| Error(format!("cannot chmod askpass helper: {e}")))?;
             }
+            let helper_path = script
+                .to_str()
+                .ok_or_else(|| Error("Askpass helper path is not UTF-8.".into()))?;
+            return runner
+                .output_with(
+                    "git",
+                    &[
+                        "-c",
+                        "credential.helper=",
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "push",
+                        "--atomic",
+                        "origin",
+                        &branch_ref,
+                        &tag_ref,
+                    ],
+                    root,
+                    &[
+                        ("GIT_ASKPASS", helper_path),
+                        ("GIT_TERMINAL_PROMPT", "0"),
+                        ("PUBLISHER_GIT_TOKEN", token),
+                        ("GIT_TRACE", "0"),
+                        ("GIT_TRACE_CURL", "0"),
+                        ("GIT_TRACE2", "0"),
+                    ],
+                    &[],
+                )
+                .map(|_| ());
         }
     }
     runner.output_with(
@@ -536,6 +549,7 @@ mod tests {
         Options {
             tag: "v0.1.0",
             image_tag: Some("main"),
+            token: None,
             dry_run,
             commit,
             create_tag,
@@ -703,6 +717,7 @@ mod tests {
         let options = Options {
             tag: "v0.1.0",
             image_tag: None,
+            token: None,
             dry_run: true,
             commit: true,
             create_tag: true,
@@ -753,6 +768,7 @@ mod tests {
             Options {
                 tag: "v0.1.0",
                 image_tag: None,
+                token: None,
                 dry_run: true,
                 commit: true,
                 create_tag: true,
@@ -811,6 +827,7 @@ mod tests {
             Options {
                 tag: "v0.1.0",
                 image_tag: None,
+                token: None,
                 dry_run: false,
                 commit: true,
                 create_tag: true,

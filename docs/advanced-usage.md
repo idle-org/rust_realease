@@ -11,6 +11,13 @@ rust_realease ./target_test_project --dry-run
 
 Its public [v0.1.3 release](https://proxy.dandaedre.com/gitea/idle-org/target_test_project/releases/tag/v0.1.3) was used to validate preparation, all three default Cross targets, published checksums, and isolated cargo-binstall installs. Use a new version and tag for future publication tests; release assets with the same names are deliberately treated as collisions.
 
+With cargo-binstall installed, run the opt-in isolated install fixture for all
+three targets with:
+
+```bash
+cargo test --locked real_binstall_installs_local_release_fixture -- --ignored
+```
+
 ## Sources and package selection
 
 `SOURCE` can be a local directory, an HTTP(S) Git URL, an SSH URL, or an SCP-style URL such as `git@host:owner/repo.git`. Remote sources are cloned into a managed checkout. Use `--keep-workdir` to retain that checkout and its artifacts; preparation retains remote checkouts automatically. Local sources are never deleted.
@@ -91,7 +98,7 @@ For repositories whose build scripts need a selected Rust toolchain inside Cross
 
 `--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. A successful Cross build from a clean checkout records its Git commit, package, targets, profile, lock mode, container engine, active Rust toolchain, and binary list. A later run with the same inputs reuses those regular binary files from Cargo's target directory; dirty checkouts, changed inputs, missing files, and invalid cache records build in a fresh target directory instead. `--recompile` explicitly bypasses a matching completed build. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously for public repositories or with Gitea authentication for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for public targets. `--skip-binstall-test` skips that install check, while retaining download verification.
 
-`--draft --stop-after upload` is useful when a release must stay private for review. Private repositories require `--skip-binstall-test`; cargo-binstall cannot fetch their attachment URLs, even when `GITEA_TOKEN` is set. `--prerelease` and `--draft` set properties when a release is created; reusing a release preserves its existing settings. `-m/--message TEXT` sets release notes, while `--message-file PATH` reads them from a UTF-8 file; they are mutually exclusive. Notes are included when creating a release and replace the body of an existing tagged release when explicitly supplied. Asset replacement is not transactional: if an upload fails after a matching asset is deleted, retry the publication explicitly.
+`--draft --stop-after upload` is useful when a release must stay private for review. Private repositories require `--skip-binstall-test`; cargo-binstall cannot fetch their attachment URLs, even when Gitea authentication is configured. `--prerelease` and `--draft` set properties when a release is created; reusing a release preserves its existing settings. `-m/--message TEXT` sets release notes, while `--message-file PATH` reads them from a UTF-8 file; they are mutually exclusive. Notes are included when creating a release and replace the body of an existing tagged release when explicitly supplied. Asset replacement is not transactional: if an upload fails after a matching asset is deleted, retry the publication explicitly.
 
 ## Artifact contract
 
@@ -108,9 +115,44 @@ Windows archive members have an `.exe` suffix. Raw assets are target-qualified t
 
 ## Authentication and security
 
-Authenticated Gitea API publication requires HTTPS. The token comes from the configured environment variable, never from a positional argument or URL. Child Cargo and Cross processes do not receive it. An HTTPS preparation push to the matching release repository can use the token through a temporary askpass helper; SSH pushes use normal Git credentials. Grant the token account code read and release write access, plus code write when using `--push-preparation`.
+Authenticated Gitea API publication requires HTTPS. Pass `--token-file PATH` to read one token from a UTF-8 file; trailing line endings are ignored, while empty and multiline files are rejected. The file takes precedence over the configured environment variable. Without that option, the token comes from `gitea.token-env`, which defaults to `GITEA_TOKEN`. Tokens are never accepted as a positional argument or URL. Child Cargo and Cross processes do not receive them. An HTTPS preparation push to the matching release repository can use the token through a temporary askpass helper; SSH pushes use normal Git credentials. Grant the token account code read and release write access, plus code write when using `--push-preparation`.
 
 Normal publication does not create a commit, tag, or push. Existing asset names cause an error unless `--replace-assets` is set; unrelated assets are not deleted. Private assets are verified with authenticated downloads and do not establish public installability.
+
+## Releasing this repository
+
+Install the publisher from the checkout, then use the repository wrapper. The
+wrapper selects this package, publishes both archive and standalone binary
+assets, and forwards its token file to `--token-file`:
+
+```bash
+cargo install --path . --locked
+./release.sh ../gitea_token.txt --compile-only
+./release.sh ../gitea_token.txt --dry-run
+./release.sh ../gitea_token.txt
+```
+
+## CI badge pipeline
+
+Jenkins runs the locked test suite and Tarpaulin configuration, enforces the
+80% line-coverage floor, and renders version, test, and coverage SVGs with the
+scripts in `scripts/`. It validates and archives exactly
+`coverage/version.svg`, `coverage/test.svg`, and `coverage/coverage.svg`.
+Every `main` build publishes those files during post-build cleanup under
+`/mnt/assets/coverage/idle-org/rust_realease/main/` for the public badge URLs
+used by the README; other branches do not publish them. A failed build renders
+the test badge as failing and the coverage badge as unavailable.
+
+Run the same coverage command locally with:
+
+```bash
+cargo tarpaulin --config tarpaulin.toml --out Json --output-dir coverage
+```
+
+The asset server must mount the published directory read-only, disable
+directory listings, serve SVG with a restrictive content security policy, and
+revalidate the mutable URLs or use a short cache lifetime. Cross builds and
+live Gitea releases remain separate release checks.
 
 ## Troubleshooting
 

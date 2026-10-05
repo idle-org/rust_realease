@@ -26,7 +26,7 @@ fn git(repository: &Path, arguments: &[&str]) -> Output {
 }
 
 #[test]
-fn release_wrapper_passes_the_token_and_preserves_the_ssh_origin() {
+fn release_wrapper_passes_the_token_file_and_preserves_the_ssh_origin() {
     let temporary = TempDir::new().expect("temporary directory should be created");
     let repository = temporary.path().join("repository");
     let fake_bin = temporary.path().join("bin");
@@ -51,7 +51,7 @@ fn release_wrapper_passes_the_token_and_preserves_the_ssh_origin() {
     fs::write(
         &fake_release,
         "#!/bin/sh\n\
-         [ \"$GITEA_TOKEN\" = test-token ] || exit 91\n\
+         [ -z \"${GITEA_TOKEN:-}\" ] || exit 91\n\
          git -C \"$1\" remote get-url origin >\"$OBSERVED_ORIGIN\"\n\
          cat \"$1/rust-release.toml\" >\"$OBSERVED_CONFIG\"\n\
          printf '%s\\n' \"$@\" >\"$OBSERVED_ARGS\"\n",
@@ -103,6 +103,10 @@ fn release_wrapper_passes_the_token_and_preserves_the_ssh_origin() {
     let arguments =
         fs::read_to_string(&observed_args).expect("fake release should record publisher arguments");
     assert!(arguments.lines().any(|argument| argument == "both"));
+    assert!(arguments.lines().any(|argument| argument == "--token-file"));
+    assert!(arguments
+        .lines()
+        .any(|argument| argument == repository.join("token.txt").to_string_lossy()));
     assert!(arguments.lines().any(|argument| argument == "--dry-run"));
     assert!(!arguments.lines().any(|argument| argument == "--prerelease"));
 }

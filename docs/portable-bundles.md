@@ -158,7 +158,11 @@ Executable validation currently supports little-endian Linux ELF (x86-64,
 aarch64, i686, riscv64gc) Windows PE (x86-64, aarch64, i686), and thin 64-bit macOS Mach-O executables
 (arm64 and x86-64). Unsupported
 executable targets fail explicitly. This checks format and architecture, not ABI,
-DLL completeness, license suitability or runtime behavior. Foreign executables
+DLL completeness, license suitability or runtime behavior. For Apple named bundles, final verification also checks every executable against
+`build.apple.deployment-target`: a dependency may have an older minimum, but not
+a newer one, and only system dylib dependencies are accepted. Cargo outputs still
+have their exact configured minimum checked during build/cache validation.
+Foreign executables
 are never executed automatically by the publisher. Trusted preparation scripts
 must follow the same rule themselves.
 

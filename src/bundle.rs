@@ -940,6 +940,70 @@ mod tests {
         }
     }
 
+    #[test]
+    fn apple_bundle_verification_checks_every_executable_in_zip_and_tgz() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("tree");
+        fs::create_dir(&tree).unwrap();
+        let dependency = b"/usr/lib/libSystem.B.dylib\0";
+        let length = (24 + dependency.len()).div_ceil(8) * 8;
+        let mut bytes = vec![0u8; 56 + length];
+        for (offset, value) in [
+            (0, 0xfeedfacfu32),
+            (4, 0x100000c),
+            (12, 2),
+            (16, 2),
+            (20, 24 + length as u32),
+            (32, 0x32),
+            (36, 24),
+            (40, 1),
+            (44, 13 << 16),
+            (56, 0xc),
+            (60, length as u32),
+            (64, 24),
+        ] {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes[80..80 + dependency.len()].copy_from_slice(dependency);
+        for format in [Format::Zip, Format::Tgz] {
+            for (minimum, should_pass) in [(12u32, true), (14u32, false)] {
+                fs::write(tree.join("app"), &bytes).unwrap();
+                let mut helper = bytes.clone();
+                helper[44..48].copy_from_slice(&(minimum << 16).to_le_bytes());
+                fs::write(tree.join("ffprobe"), helper).unwrap();
+                fs::write(tree.join("LICENSE"), b"notice, not executable").unwrap();
+                let entries = [("app", 0o755), ("ffprobe", 0o755), ("LICENSE", 0o644)]
+                    .into_iter()
+                    .map(|(name, mode)| Entry {
+                        destination: name.into(),
+                        mode,
+                        sha256: package::checksum(&tree.join(name)).unwrap(),
+                    })
+                    .collect::<Vec<_>>();
+                let path = dir.path().join("bundle");
+                write_archive(&path, &tree, "root", format, &entries).unwrap();
+                let artifact = Artifact {
+                    target: "aarch64-apple-darwin".into(),
+                    sha256: package::checksum(&path).unwrap(),
+                    path: path.clone(),
+                    contents: ArtifactContents::Bundle {
+                        root: "root".into(),
+                        format,
+                        entries,
+                    },
+                };
+                assert_eq!(
+                    crate::verify::verify_apple_artifact(&path, &artifact, "13.0").is_ok(),
+                    should_pass
+                );
+                let mut broken = fs::OpenOptions::new().write(true).open(&path).unwrap();
+                broken.write_all(b"broken").unwrap();
+                assert!(crate::verify::verify_apple_artifact(&path, &artifact, "13.0").is_err());
+            }
+        }
+    }
+
     fn fixture() -> (
         tempfile::TempDir,
         SelectedPackage,

@@ -15,6 +15,15 @@ pub fn verify_path(path: &Path, target: &str, minimum: &str) -> Result<(), Error
 }
 
 pub fn verify(bytes: &[u8], target: &str, minimum: &str) -> Result<(), Error> {
+    verify_policy(bytes, target, minimum, true)
+}
+
+/// Bundled runtime tools may support an older macOS version than the application.
+pub fn verify_compatible(bytes: &[u8], target: &str, minimum: &str) -> Result<(), Error> {
+    verify_policy(bytes, target, minimum, false)
+}
+
+fn verify_policy(bytes: &[u8], target: &str, minimum: &str, exact: bool) -> Result<(), Error> {
     if bytes.len() < 32 || bytes[..4] != MH_MAGIC_64_LE {
         return Err(Error(
             "expected a little-endian 64-bit Mach-O executable".into(),
@@ -86,9 +95,9 @@ pub fn verify(bytes: &[u8], target: &str, minimum: &str) -> Result<(), Error> {
         return Err(Error("Mach-O load command count/size mismatch".into()));
     }
     let found = found_minimum.ok_or_else(|| Error("Mach-O has no LC_BUILD_VERSION".into()))?;
-    if found != expected_minimum {
+    if (exact && found != expected_minimum) || (!exact && found > expected_minimum) {
         return Err(Error(format!(
-            "Mach-O deployment minimum {} does not match configured {minimum}",
+            "Mach-O deployment minimum {} is incompatible with configured {minimum}",
             display_version(found)
         )));
     }
@@ -165,6 +174,8 @@ mod tests {
     fn validates_architecture_deployment_minimum_and_system_dependencies() {
         let arm = fixture(0x0100_000c, 13 << 16, "/usr/lib/libSystem.B.dylib");
         verify(&arm, "aarch64-apple-darwin", "13.0").unwrap();
+        verify_compatible(&arm, "aarch64-apple-darwin", "14.0").unwrap();
+        assert!(verify_compatible(&arm, "aarch64-apple-darwin", "12.0").is_err());
         assert!(verify(&arm, "x86_64-apple-darwin", "13.0").is_err());
         assert!(verify(&arm, "aarch64-apple-darwin", "14.0").is_err());
 

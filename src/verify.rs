@@ -152,9 +152,53 @@ pub fn verify_apple_artifact(
             }
             Ok(())
         }
-        ArtifactContents::Bundle { .. } => Err(Error(
-            "Apple named bundles require an explicit Mach-O deployment policy".into(),
-        )),
+        ArtifactContents::Bundle {
+            root,
+            format,
+            entries,
+        } => {
+            // Recheck the declared tree, hashes and modes before interpreting executable bytes.
+            crate::bundle::verify(path, root, *format, entries)?;
+            let mut expected = entries
+                .iter()
+                .filter(|entry| entry.mode & 0o111 != 0)
+                .map(|entry| format!("{root}/{}", entry.destination))
+                .collect::<std::collections::BTreeSet<_>>();
+            let inspect = |reader: &mut dyn Read| -> Result<(), Error> {
+                let mut bytes = Vec::new();
+                reader
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| Error(format!("cannot read Apple bundle executable: {e}")))?;
+                crate::macho::verify_compatible(&bytes, &artifact.target, deployment_target)
+            };
+            match format {
+                crate::bundle::Format::Zip => {
+                    let mut archive = zip::ZipArchive::new(File::open(path)?)
+                        .map_err(|e| Error(format!("invalid Apple ZIP: {e}")))?;
+                    for name in &expected {
+                        let mut entry = archive
+                            .by_name(name)
+                            .map_err(|e| Error(format!("missing Apple executable {name}: {e}")))?;
+                        inspect(&mut entry)?;
+                    }
+                    expected.clear();
+                }
+                crate::bundle::Format::Tgz => {
+                    let mut archive = tar::Archive::new(GzDecoder::new(File::open(path)?));
+                    for entry in archive.entries()? {
+                        let mut entry = entry?;
+                        let name = entry.path()?.to_string_lossy().into_owned();
+                        if expected.remove(&name) {
+                            inspect(&mut entry)?;
+                        }
+                    }
+                }
+            }
+            if !expected.is_empty() {
+                return Err(Error("Missing Apple bundle executables".into()));
+            }
+            Ok(())
+        }
     }
 }
 

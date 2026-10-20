@@ -155,7 +155,8 @@ and reopened to check its declared contents, modes and hashes. Partial staging i
 removed on failure; successful invocation directories are retained under `dist/`.
 
 Executable validation currently supports little-endian Linux ELF (x86-64,
-aarch64, i686, riscv64gc) and Windows PE (x86-64, aarch64, i686). Unsupported
+aarch64, i686, riscv64gc) Windows PE (x86-64, aarch64, i686), and thin 64-bit macOS Mach-O executables
+(arm64 and x86-64). Unsupported
 executable targets fail explicitly. This checks format and architecture, not ABI,
 DLL completeness, license suitability or runtime behavior. Foreign executables
 are never executed automatically by the publisher. Trusted preparation scripts

@@ -496,6 +496,14 @@ fn architecture(path: &Path, target: &str) -> Result<(), Error> {
                     "riscv64gc" => Some(243),
                     _ => None,
                 }
+    } else if target.ends_with("-apple-darwin") && h[..4] == [0xcf, 0xfa, 0xed, 0xfe] {
+        u32::from_le_bytes(h[12..16].try_into().unwrap()) == 2
+            && Some(u32::from_le_bytes(h[4..8].try_into().unwrap()))
+                == match arch {
+                    "aarch64" => Some(0x0100_000c),
+                    "x86_64" => Some(0x0100_0007),
+                    _ => None,
+                }
     } else {
         false
     };
@@ -899,6 +907,39 @@ pub fn verify(path: &Path, root: &str, format: Format, entries: &[Entry]) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bundle_macho_requires_matching_thin_64_bit_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ffprobe");
+        for (target, cpu) in [
+            ("aarch64-apple-darwin", 0x0100_000cu32),
+            ("x86_64-apple-darwin", 0x0100_0007u32),
+        ] {
+            let mut bytes = [0u8; 64];
+            bytes[..4].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe]);
+            bytes[4..8].copy_from_slice(&cpu.to_le_bytes());
+            bytes[12..16].copy_from_slice(&2u32.to_le_bytes());
+            fs::write(&path, bytes).unwrap();
+            architecture(&path, target).unwrap();
+            let wrong = if target.starts_with("aarch64") {
+                "x86_64-apple-darwin"
+            } else {
+                "aarch64-apple-darwin"
+            };
+            assert!(architecture(&path, wrong).is_err());
+            assert!(architecture(&path, "x86_64-unknown-linux-gnu").is_err());
+            bytes[12] = 6; // A dylib is not a runnable program.
+            fs::write(&path, bytes).unwrap();
+            assert!(architecture(&path, target).is_err());
+            bytes[12] = 2;
+            bytes[..4].copy_from_slice(&[0xca, 0xfe, 0xba, 0xbe]);
+            fs::write(&path, bytes).unwrap();
+            assert!(architecture(&path, target).is_err());
+            fs::write(&path, &bytes[..16]).unwrap();
+            assert!(architecture(&path, target).is_err());
+        }
+    }
+
     fn fixture() -> (
         tempfile::TempDir,
         SelectedPackage,

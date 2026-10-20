@@ -264,13 +264,19 @@ pathlib.Path(c['manifest_path']).write_text(json.dumps(dict(schema_version=1,tar
     executable(
         &bin.join("cross"),
         r#"#!/usr/bin/env python3
-import sys,pathlib,shutil,json,os
+import sys,pathlib,json,os
 a=sys.argv
 assert '--message-format=json-render-diagnostics' in a
 out=pathlib.Path(a[a.index('--target-dir')+1])/'actual output é'
 out.mkdir(parents=True)
 binary=out/'demo'
-shutil.copyfile('/bin/true',binary)
+elf=bytearray(64)
+elf[:4]=b'\x7fELF'
+elf[4]=2
+elf[5]=1
+elf[18:20]=(62).to_bytes(2,'little')
+binary.write_bytes(elf)
+binary.chmod(0o755)
 print(json.dumps(dict(reason='compiler-artifact',target=dict(name='demo',kind=['bin']),executable="/target/actual output é/demo")))
 with open(os.environ['CROSS_LOG'],'a') as f: f.write('build\n')
 "#,
@@ -343,6 +349,7 @@ with open(os.environ['CROSS_LOG'],'a') as f: f.write('build\n')
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn mixed_cross_and_apple_compile_only_routes_and_packages_eight_assets() {
     let temporary = TempDir::new().unwrap();
     let project = temporary.path().join("mixed checkout with spaces");

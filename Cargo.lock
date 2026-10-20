@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "rust_realease"
-version = "0.1.6-rc.2"
+version = "0.1.6-rc.3"
 dependencies = [
  "clap",
  "console",

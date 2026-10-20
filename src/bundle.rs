@@ -695,7 +695,8 @@ pub fn assemble(
                 "{}: portable tree/hash/architecture checks passed; native runtime {smoke}",
                 artifact.path.display()
             );
-            records.push(serde_json::json!({"bundle":b.name,"target":target,"filename":artifact.path.file_name(),"sha256":artifact.sha256,"root":root,"files":entries,"checks":{"portable_tree":"passed","hashes":"passed","architecture":"passed","native_runtime":smoke}}));
+            let filename = artifact_filename(&artifact.path)?;
+            records.push(serde_json::json!({"bundle":b.name,"target":target,"filename":filename,"sha256":artifact.sha256,"root":root,"files":entries,"checks":{"portable_tree":"passed","hashes":"passed","architecture":"passed","native_runtime":smoke}}));
             artifacts.push(artifact);
         }
     }
@@ -704,7 +705,8 @@ pub fn assemble(
             crate::verify::verify_archive(&a.path, a)?;
         }
         if !matches!(a.contents, ArtifactContents::Bundle { .. }) {
-            records.push(serde_json::json!({"target":a.target,"filename":a.path.file_name(),"sha256":a.sha256,"checks":{"native_runtime":"skipped","cargo_binstall":"deferred until publication"}}));
+            let filename = artifact_filename(&a.path)?;
+            records.push(serde_json::json!({"target":a.target,"filename":filename,"sha256":a.sha256,"checks":{"native_runtime":"skipped","cargo_binstall":"deferred until publication"}}));
         }
     }
     let receipt = artifact_dir.join("artifact-manifest.json");
@@ -745,6 +747,14 @@ pub fn assemble(
         .map_err(|e| Error(e.to_string()))?;
     let _ = stage.keep();
     Ok((artifacts, old_sums))
+}
+fn artifact_filename(path: &Path) -> Result<String, Error> {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Error("Invalid artifact filename".into()))?;
+    component(filename, false)?;
+    Ok(filename.to_owned())
 }
 fn zip_error(e: zip::result::ZipError) -> Error {
     Error(e.to_string())
@@ -999,6 +1009,16 @@ required-destinations=['runtime{binary-ext}','LICENSES/runtime/LICENSE.txt','LIC
         let receipt = first.iter().find(|a| a.target == "manifest").unwrap();
         let text = fs::read_to_string(&receipt.path).unwrap();
         assert!(!text.contains(&temp.path().display().to_string()));
+        let public_manifest: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(public_manifest["schema_version"], 1);
+        let records = public_manifest["artifacts"].as_array().unwrap();
+        assert_eq!(records.len(), 4);
+        for record in records {
+            assert!(record["target"].is_string());
+            assert!(record["filename"].is_string());
+            assert_eq!(record["sha256"].as_str().unwrap().len(), 64);
+            assert!(record["checks"].is_object());
+        }
         fs::write(temp.path().join("member/LICENSE"), "new license").unwrap();
         let (third, _) = assemble(temp.path(), &p, &c, &outputs, "abc", true, &runner).unwrap();
         assert_ne!(

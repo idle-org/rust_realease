@@ -121,6 +121,7 @@ impl Gitea {
         draft: bool,
         prerelease: bool,
         message: Option<&str>,
+        replace_existing_message: bool,
     ) -> Result<RemoteRelease, Error> {
         let encoded = encode(tag);
         let remote = self
@@ -151,7 +152,7 @@ impl Gitea {
         };
         let release: RemoteRelease = serde_json::from_value(release)
             .map_err(|_| Error("Gitea release response is missing id or draft state.".into()))?;
-        if existed {
+        if existed && replace_existing_message {
             if let Some(message) = message {
                 self.request(
                     Method::PATCH,
@@ -362,7 +363,7 @@ mod tests {
         ]);
         let api = Gitea::with_token(&format!("{host}/gitea/team/demo"), "test-token").unwrap();
         let release = api
-            .ensure_release("v0.1.0", "abc", false, true, Some("Release notes"))
+            .ensure_release("v0.1.0", "abc", false, true, Some("Release notes"), false)
             .unwrap();
         assert_eq!(release.id, 7);
         let requests = handle.join().unwrap();
@@ -391,7 +392,7 @@ mod tests {
         ]);
         let api = Gitea::with_token(&format!("{host}/gitea/team/demo"), "test-token").unwrap();
         assert_eq!(
-            api.ensure_release("v0.1.0", "abc", false, false, Some("Updated notes"))
+            api.ensure_release("v0.1.0", "abc", false, false, Some("Updated notes"), true,)
                 .unwrap()
                 .id,
             9
@@ -456,7 +457,7 @@ mod tests {
         }]);
         let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
         let error = api
-            .ensure_release("v0.1.0", "abc", false, false, None)
+            .ensure_release("v0.1.0", "abc", false, false, None, false)
             .unwrap_err()
             .to_string();
         assert!(error.contains("HTTP 401"));
@@ -478,7 +479,7 @@ mod tests {
             }]);
             let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
             let error = api
-                .ensure_release("v0.1.0", "abc", false, false, None)
+                .ensure_release("v0.1.0", "abc", false, false, None, false)
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(expected), "{error}");
@@ -546,7 +547,7 @@ mod tests {
         }]);
         let api = Gitea::with_token(&format!("{host}/team/demo"), "test-token").unwrap();
         assert!(api
-            .ensure_release("v0.1.0", "abc", false, false, None)
+            .ensure_release("v0.1.0", "abc", false, false, None, false)
             .unwrap_err()
             .to_string()
             .contains("invalid JSON"));

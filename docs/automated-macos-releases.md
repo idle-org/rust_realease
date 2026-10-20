@@ -166,14 +166,17 @@ a successful build or create/upload a partial release.
 
 ## Artifacts and target-aware verification
 
-Apple binary names have no `.exe` suffix. Existing archive and raw-binary
-naming applies unchanged. For version `{version}` and package `tiny-wb`:
+Apple binary names have no `.exe` suffix. Versioned tgz archives remain the
+recommended download because their internal executable names are ordinary Cargo
+binary names. Standalone Apple asset names omit the version so Finder does not
+mistake the final dotted version component for a file extension. For version
+`{version}` and package `tiny-wb`:
 
 ```text
 tiny-wb-aarch64-apple-darwin-v{version}.tgz
-tiny-wb-aarch64-apple-darwin-v{version}
+tiny-wb-aarch64-apple-darwin
 tiny-wb-x86_64-apple-darwin-v{version}.tgz
-tiny-wb-x86_64-apple-darwin-v{version}
+tiny-wb-x86_64-apple-darwin
 ```
 
 Each tgz has the cargo-binstall layout:
@@ -189,6 +192,17 @@ timestamps in tgz files remain normalized. A mixed four-target release using
 All local archives are checked before any release creation. Existing remote
 collision handling, replacement policy, upload, authenticated/private download
 handling, and checksum verification apply to Apple assets too.
+
+When a release contains Apple artifacts, the publisher adds a
+`## macOS Workaround` section to the release body. It is generated from the
+artifacts being uploaded: named bundles are preferred, then canonical tgz
+archives, with standalone binaries used only when no archive exists. The shell
+snippet names the correct architecture, archive, extracted root, and executable
+members. It extracts into `~/Downloads`, applies
+`xattr -rd com.apple.quarantine` to the complete extracted tree, restores the
+executable bits, and starts a GUI executable when one has a `-gui` name. User
+notes supplied with `--message` or `--message-file` appear before this section.
+An existing `## macOS Workaround` heading prevents a duplicate section.
 
 For every Apple executable, the Linux host parses the Mach-O header and load
 commands and requires:

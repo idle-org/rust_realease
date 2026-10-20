@@ -19,7 +19,11 @@ pub fn binary_filename(binary: &str, target: &str) -> String {
 }
 
 pub fn binary_asset_name(binary: &str, target: &str, version: &str) -> String {
-    binary_filename(&format!("{binary}-{target}-v{version}"), target)
+    if target.ends_with("-apple-darwin") {
+        binary_filename(&format!("{binary}-{target}"), target)
+    } else {
+        binary_filename(&format!("{binary}-{target}-v{version}"), target)
+    }
 }
 
 pub fn binstall_metadata(prefix: &str) -> [(&'static str, String); 3] {
@@ -51,6 +55,10 @@ mod tests {
         assert_eq!(
             binary_asset_name("demo", "x86_64-pc-windows-gnu", "0.3.1"),
             "demo-x86_64-pc-windows-gnu-v0.3.1.exe"
+        );
+        assert_eq!(
+            binary_asset_name("demo", "aarch64-apple-darwin", "0.3.1"),
+            "demo-aarch64-apple-darwin"
         );
         let metadata = binstall_metadata("release-");
         assert_eq!(

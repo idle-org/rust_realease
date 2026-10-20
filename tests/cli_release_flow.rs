@@ -477,7 +477,7 @@ with open(os.environ['CROSS_LOG'],'a') as stream: stream.write('zig:'+target+'\n
         assert!(artifact_dir
             .join(format!("demo-{target}-v2.3.4.tgz"))
             .is_file());
-        let binary = artifact_dir.join(format!("demo-{target}-v2.3.4"));
+        let binary = artifact_dir.join(format!("demo-{target}"));
         assert!(binary.is_file());
         assert_ne!(
             fs::metadata(binary).unwrap().permissions().mode() & 0o111,

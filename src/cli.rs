@@ -109,7 +109,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             "--prepare-repo is a separate mode; omit --stop-after.".into(),
         ));
     }
-    let release_message = match args.message_file.as_deref() {
+    let supplied_release_message = match args.message_file.as_deref() {
         Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
             Error(format!(
                 "cannot read release message file {}: {e}",
@@ -444,12 +444,15 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     }
     let (api, private) =
         publication.ok_or_else(|| Error("Publication client was not initialized.".into()))?;
+    let release_message =
+        release_message_with_macos_workaround(supplied_release_message.as_deref(), &artifacts)?;
     let release = api.ensure_release(
         &tag,
         &commit,
         args.draft,
         args.prerelease,
         release_message.as_deref(),
+        supplied_release_message.is_some(),
     )?;
     ui::success(format_args!("Release ready: {tag}"));
     if args.stop_after == Some(Stage::Release) {
@@ -480,6 +483,145 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     }
     ui::success("Release completed and published artifacts verified");
     Ok(())
+}
+
+fn release_message_with_macos_workaround(
+    supplied: Option<&str>,
+    artifacts: &[crate::package::Artifact],
+) -> Result<Option<String>, Error> {
+    const HEADING: &str = "## macOS Workaround";
+    if supplied.is_some_and(|message| message.contains(HEADING)) {
+        return Ok(supplied.map(str::to_owned));
+    }
+    let Some(workaround) = macos_workaround(artifacts)? else {
+        return Ok(supplied.map(str::to_owned));
+    };
+    Ok(Some(
+        match supplied.map(str::trim_end).filter(|s| !s.is_empty()) {
+            Some(message) => format!("{message}\n\n{workaround}"),
+            None => workaround,
+        },
+    ))
+}
+
+fn macos_workaround(artifacts: &[crate::package::Artifact]) -> Result<Option<String>, Error> {
+    use crate::{bundle::Format, package::ArtifactContents};
+
+    let apple = artifacts
+        .iter()
+        .filter(|artifact| build::is_apple(&artifact.target))
+        .collect::<Vec<_>>();
+    if apple.is_empty() {
+        return Ok(None);
+    }
+    let has_bundle = apple
+        .iter()
+        .any(|artifact| matches!(artifact.contents, ArtifactContents::Bundle { .. }));
+    let has_archive = apple
+        .iter()
+        .any(|artifact| matches!(artifact.contents, ArtifactContents::Archive { .. }));
+    let selected = apple.into_iter().filter(|artifact| {
+        if has_bundle {
+            matches!(artifact.contents, ArtifactContents::Bundle { .. })
+        } else if has_archive {
+            matches!(artifact.contents, ArtifactContents::Archive { .. })
+        } else {
+            matches!(artifact.contents, ArtifactContents::Binary)
+        }
+    });
+    let mut sections = Vec::new();
+    for artifact in selected {
+        let filename = artifact
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error("Invalid macOS artifact filename".into()))?;
+        let platform = if artifact.target.starts_with("aarch64-") {
+            "Apple Silicon"
+        } else {
+            "Intel Mac"
+        };
+        let commands = match &artifact.contents {
+            ArtifactContents::Bundle {
+                root,
+                format,
+                entries,
+            } => archive_workaround(
+                filename,
+                root,
+                *format,
+                entries
+                    .iter()
+                    .filter(|entry| entry.mode & 0o111 != 0)
+                    .map(|entry| entry.destination.as_str()),
+            ),
+            ArtifactContents::Archive { root, binaries } => archive_workaround(
+                filename,
+                root,
+                Format::Tgz,
+                binaries.iter().map(String::as_str),
+            ),
+            ArtifactContents::Binary => {
+                let quoted = shell_quote(filename);
+                format!(
+                    "downloads=\"$HOME/Downloads\"\nexecutable=\"$downloads\"/{quoted}\nxattr -d com.apple.quarantine \"$executable\" 2>/dev/null || true\nchmod +x \"$executable\"\n\"$executable\""
+                )
+            }
+        };
+        sections.push(format!(
+            "For **{platform}** (`{filename}`), run in Terminal:\n```sh\n{commands}\n```"
+        ));
+    }
+    if sections.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "## macOS Workaround\n\nIf macOS blocks these downloaded, unsigned executables, remove their quarantine attribute manually after verifying and trusting the release. Download the indicated archive into `~/Downloads`; the commands extract it there, remove quarantine recursively from everything in the extracted directory, restore executable permissions, and start the first executable.\n\n{}",
+        sections.join("\n\n")
+    )))
+}
+
+fn archive_workaround<'a>(
+    filename: &str,
+    root: &str,
+    format: crate::bundle::Format,
+    executables: impl Iterator<Item = &'a str>,
+) -> String {
+    let filename = shell_quote(filename);
+    let root = shell_quote(root);
+    let executables = executables.collect::<Vec<_>>();
+    let extraction = match format {
+        crate::bundle::Format::Tgz => "tar -xzf \"$archive\" -C \"$downloads\"",
+        crate::bundle::Format::Zip => "ditto -x -k \"$archive\" \"$downloads\"",
+    };
+    let paths = executables
+        .iter()
+        .map(|path| format!("\"$bundle\"/{}", shell_quote(path)))
+        .collect::<Vec<_>>();
+    let chmod = if paths.is_empty() {
+        String::new()
+    } else {
+        format!("\nchmod +x {}", paths.join(" "))
+    };
+    let launch = paths
+        .iter()
+        .zip(executables.iter())
+        .find(|(_, executable)| {
+            executable
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.ends_with("-gui"))
+        })
+        .map(|(path, _)| path)
+        .or_else(|| paths.first())
+        .map_or_else(String::new, |path| format!("\n{path}"));
+    format!(
+        "downloads=\"$HOME/Downloads\"\narchive=\"$downloads\"/{filename}\n{extraction}\nbundle=\"$downloads\"/{root}\nxattr -rd com.apple.quarantine \"$bundle\"{chmod}{launch}"
+    )
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn read_token_file(path: &std::path::Path) -> Result<String, Error> {
@@ -516,6 +658,10 @@ fn read_token_file(path: &std::path::Path) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        bundle::{Entry, Format},
+        package::{Artifact, ArtifactContents},
+    };
     use std::{fs, path::Path};
 
     fn write(root: &Path, relative: &str, content: &str) {
@@ -632,6 +778,76 @@ mod tests {
             "notes.md",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn macos_workaround_uses_actual_bundle_and_quarantines_its_complete_tree() {
+        let artifacts = vec![
+            Artifact {
+                target: "aarch64-apple-darwin".into(),
+                path: "dist/pptx-reporter-aarch64-apple-darwin".into(),
+                contents: ArtifactContents::Binary,
+                sha256: "0".repeat(64),
+            },
+            Artifact {
+                target: "aarch64-apple-darwin".into(),
+                path: "dist/pptx-reporter-portable-aarch64-apple-darwin-v0.1.2.tgz".into(),
+                contents: ArtifactContents::Bundle {
+                    root: "pptx-reporter-portable-aarch64-apple-darwin-v0.1.2".into(),
+                    format: Format::Tgz,
+                    entries: vec![
+                        Entry {
+                            destination: "pptx-reporter".into(),
+                            sha256: "1".repeat(64),
+                            mode: 0o755,
+                        },
+                        Entry {
+                            destination: "pptx-reporter-gui".into(),
+                            sha256: "2".repeat(64),
+                            mode: 0o755,
+                        },
+                        Entry {
+                            destination: "resources/font.ttf".into(),
+                            sha256: "3".repeat(64),
+                            mode: 0o644,
+                        },
+                    ],
+                },
+                sha256: "4".repeat(64),
+            },
+        ];
+        let message = release_message_with_macos_workaround(Some("Release notes"), &artifacts)
+            .unwrap()
+            .unwrap();
+        assert!(message.starts_with("Release notes\n\n## macOS Workaround"));
+        assert!(message.contains("tar -xzf \"$archive\" -C \"$downloads\""));
+        assert!(message.contains("xattr -rd com.apple.quarantine \"$bundle\""));
+        assert!(message
+            .contains("chmod +x \"$bundle\"/'pptx-reporter' \"$bundle\"/'pptx-reporter-gui'"));
+        assert!(message.contains("\n\"$bundle\"/'pptx-reporter-gui'\n```"));
+        assert!(!message.contains("executable=\"$downloads\""));
+    }
+
+    #[test]
+    fn macos_workaround_is_not_duplicated_or_added_to_other_targets() {
+        let linux = Artifact {
+            target: "x86_64-unknown-linux-gnu".into(),
+            path: "dist/demo.tgz".into(),
+            contents: ArtifactContents::Archive {
+                root: "demo".into(),
+                binaries: vec!["demo".into()],
+            },
+            sha256: "0".repeat(64),
+        };
+        assert_eq!(
+            release_message_with_macos_workaround(Some("Notes"), &[linux]).unwrap(),
+            Some("Notes".into())
+        );
+        let existing = "Notes\n\n## macOS Workaround\n\nCustom instructions";
+        assert_eq!(
+            release_message_with_macos_workaround(Some(existing), &[]).unwrap(),
+            Some(existing.into())
+        );
     }
 
     #[test]

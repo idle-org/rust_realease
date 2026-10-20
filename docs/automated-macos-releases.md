@@ -247,9 +247,10 @@ No Gitea token is required. Publication remains a separate explicit invocation.
 
 ## Verification performed for this implementation
 
-No release, upload, tag, push, Jenkins job, or global publisher installation was
-performed. A disposable clone of `tiny-wb` commit `8ed07cb` under `/tmp` was
-built with this checkout's publisher and rootless Podman.
+During the initial implementation verification, no release, upload, tag, push,
+Jenkins job, or global publisher installation was performed. A disposable clone
+of `tiny-wb` commit `8ed07cb` under `/tmp` was built with this checkout's
+publisher and rootless Podman.
 
 Real two-target command:
 
@@ -293,4 +294,22 @@ dry-run, token-free compile-only operation, cache reuse/invalidation fields,
 Mach-O rejection cases, artifact names, permissions, archive layout and eight
 checksum entries. Native macOS execution, exact macOS versions/CPUs exercised by
 the maintainer's earlier successful testing, hardware behavior, Gatekeeper,
-signing, notarization, Jenkins and real publication remain external checks.
+At that point, signing, notarization, Jenkins and real publication remained
+external checks.
+
+### Subsequent self-release
+
+The implementation was then released as the `v0.1.6-rc.3` prerelease from
+commit `609876f00c7821dd5a9d36b364c85fd883d80939`. The repository's release
+configuration selected its three existing Cross targets plus
+`x86_64-apple-darwin`. The token-free compile-only phase completed all four
+targets in 374.9 seconds and validated the Apple Mach-O file before any remote
+release mutation.
+
+The publication phase reused that hash-validated build, uploaded eight payload
+assets plus `SHA256SUMS`, downloaded every asset again, verified all checksums
+and archive layouts, and completed isolated cargo-binstall installation checks
+for all four targets. The Apple runtime check remained explicitly skipped
+because the publisher host was Linux. The commit and annotated tag were pushed
+atomically before release creation. No Jenkins job or global publisher
+installation was involved.

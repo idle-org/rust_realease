@@ -17,7 +17,15 @@ pub struct Artifact {
 
 #[derive(Debug, Clone)]
 pub enum ArtifactContents {
-    Archive { root: String, binaries: Vec<String> },
+    Bundle {
+        root: String,
+        format: crate::bundle::Format,
+        entries: Vec<crate::bundle::Entry>,
+    },
+    Archive {
+        root: String,
+        binaries: Vec<String>,
+    },
     Binary,
 }
 

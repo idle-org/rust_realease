@@ -7,6 +7,7 @@ use std::{
 
 #[derive(Debug)]
 pub struct SelectedPackage {
+    pub workspace_root: PathBuf,
     pub name: String,
     pub version: String,
     pub binaries: Vec<String>,
@@ -220,6 +221,7 @@ pub fn inspect(
         ));
     }
     Ok(SelectedPackage {
+        workspace_root,
         name: selected.name,
         version: selected.version,
         binaries: binaries.iter().map(|binary| binary.name.clone()).collect(),

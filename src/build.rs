@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TargetOutputs {
     pub target: String,
     pub binaries: Vec<(String, PathBuf)>,
@@ -22,14 +22,22 @@ struct BuildFingerprint {
     targets: Vec<String>,
     profile: String,
     locked: bool,
+    features: Vec<String>,
     engine: String,
     toolchain: Option<String>,
+    apple_image: String,
+    apple_deployment_target: String,
+    apple_sdk_root: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct BuildCache {
+    #[serde(default)]
+    outputs: Option<Vec<TargetOutputs>>,
     fingerprint: BuildFingerprint,
     target_dir: PathBuf,
+    #[serde(default)]
+    output_hashes: std::collections::BTreeMap<String, String>,
 }
 
 pub fn prerequisites(
@@ -40,8 +48,13 @@ pub fn prerequisites(
     runner: &Runner,
 ) -> (Vec<String>, Option<String>) {
     let mut problems = Vec::new();
-    if let Err(error) = validate_cross_config(root) {
-        problems.push(error.to_string());
+    let needs_build = needs_cross;
+    let needs_cross = needs_build && config.targets.iter().any(|target| !is_apple(target));
+    let needs_apple = needs_build && config.targets.iter().any(|target| is_apple(target));
+    if needs_cross {
+        if let Err(error) = validate_cross_config(root) {
+            problems.push(error.to_string());
+        }
     }
     for tool in ["git", "cargo"]
         .into_iter()
@@ -54,8 +67,11 @@ pub fn prerequisites(
     if needs_cross && cross_program().is_none() {
         problems.push("cross is missing (looked for cross and cargo-cross)".into());
     }
+    if needs_apple && env::consts::OS != "linux" {
+        problems.push("Apple cross-compilation is supported from a Linux release host".into());
+    }
     let mut engine = None;
-    if needs_cross {
+    if needs_build {
         let requested = env::var("CROSS_CONTAINER_ENGINE").ok();
         let candidate = requested.or_else(|| {
             ["docker", "podman"]
@@ -162,6 +178,11 @@ pub fn verify_source(
     if config.locked {
         flags.push("--locked");
     }
+    let features;
+    if !config.features.is_empty() {
+        features = config.features.join(",");
+        flags.extend(["--features", &features]);
+    }
     runner.output("cargo", &[&["check"], flags.as_slice()].concat(), root)?;
     if !skip_tests {
         runner.output("cargo", &[&["test"], flags.as_slice()].concat(), root)?;
@@ -184,6 +205,9 @@ pub fn cross_arguments(
     if config.locked {
         args.push("--locked".into());
     }
+    if !config.features.is_empty() {
+        args.extend(["--features".into(), config.features.join(",")]);
+    }
     args.extend([
         "--target".into(),
         target.to_owned(),
@@ -196,6 +220,95 @@ pub fn cross_arguments(
         args.extend(["--bin".into(), binary.clone()]);
     }
     args
+}
+
+pub fn is_apple(target: &str) -> bool {
+    matches!(target, "aarch64-apple-darwin" | "x86_64-apple-darwin")
+}
+
+fn apple_arguments(
+    root: &Path,
+    output: &Path,
+    project: &SelectedPackage,
+    config: &Config,
+    target: &str,
+    engine: &str,
+) -> Result<Vec<String>, Error> {
+    let root = fs::canonicalize(root)
+        .map_err(|e| Error(format!("cannot resolve Apple source mount: {e}")))?;
+    fs::create_dir_all(output)
+        .map_err(|e| Error(format!("cannot create Apple output directory: {e}")))?;
+    let output = fs::canonicalize(output)
+        .map_err(|e| Error(format!("cannot resolve Apple output mount: {e}")))?;
+    let (uid, gid) = current_user();
+    let mut args = vec![
+        "run".into(),
+        "--rm".into(),
+        "--user".into(),
+        format!("{uid}:{gid}"),
+    ];
+    if engine == "podman" {
+        args.push("--userns=keep-id".into());
+    }
+    args.extend([
+        "-v".into(),
+        format!("{}:/io", root.display()),
+        "-v".into(),
+        format!("{}:/output", output.display()),
+        "-w".into(),
+        "/io".into(),
+        "-e".into(),
+        "HOME=/tmp".into(),
+        "-e".into(),
+        "CARGO_HOME=/output/cargo-home".into(),
+        "-e".into(),
+        "CARGO_TARGET_DIR=/output/target".into(),
+        "-e".into(),
+        "ZIG_GLOBAL_CACHE_DIR=/output/zig-cache".into(),
+        "-e".into(),
+        format!(
+            "MACOSX_DEPLOYMENT_TARGET={}",
+            config.apple.deployment_target
+        ),
+        "-e".into(),
+        format!("SDKROOT={}", config.apple.sdk_root),
+        config.apple.image.clone(),
+        "cargo".into(),
+        "zigbuild".into(),
+    ]);
+    if config.locked {
+        args.push("--locked".into());
+    }
+    if config.profile == "release" {
+        args.push("--release".into());
+    } else {
+        args.extend(["--profile".into(), config.profile.clone()]);
+    }
+    if !config.features.is_empty() {
+        args.extend(["--features".into(), config.features.join(",")]);
+    }
+    args.extend([
+        "--package".into(),
+        project.name.clone(),
+        "--target".into(),
+        target.into(),
+        "--message-format=json-render-diagnostics".into(),
+    ]);
+    for binary in &project.binaries {
+        args.extend(["--bin".into(), binary.clone()]);
+    }
+    Ok(args)
+}
+
+#[cfg(unix)]
+fn current_user() -> (u32, u32) {
+    // SAFETY: getuid/getgid have no preconditions and cannot fail.
+    unsafe { (libc::getuid(), libc::getgid()) }
+}
+
+#[cfg(not(unix))]
+fn current_user() -> (u32, u32) {
+    (0, 0)
 }
 
 pub fn build(
@@ -217,7 +330,7 @@ pub fn build(
             .and_then(|line| line.split_whitespace().next().map(str::to_owned))
     });
     let fingerprint = clean_commit.map(|commit| BuildFingerprint {
-        format_version: 1,
+        format_version: 2,
         commit: commit.to_owned(),
         package: project.name.clone(),
         version: project.version.clone(),
@@ -225,8 +338,12 @@ pub fn build(
         targets: config.targets.clone(),
         profile: config.profile.clone(),
         locked: config.locked,
+        features: config.features.clone(),
         engine: engine.to_owned(),
         toolchain: toolchain.clone(),
+        apple_image: config.apple.image.clone(),
+        apple_deployment_target: config.apple.deployment_target.clone(),
+        apple_sdk_root: config.apple.sdk_root.clone(),
     });
     let cache_path = target_base.join("release-build.json");
     if !recompile {
@@ -258,9 +375,22 @@ pub fn build(
         &config.profile
     };
     let mut outputs = Vec::new();
-    let cross = cross_program()
-        .ok_or_else(|| Error("cross is missing (looked for cross and cargo-cross)".into()))?;
+    let cross = cross_program();
     let builds_started = Instant::now();
+    let credential_names = env::vars_os()
+        .filter_map(|(name, _)| {
+            let name = name.to_string_lossy();
+            let upper = name.to_ascii_uppercase();
+            ["TOKEN", "PASSWORD", "SECRET", "CREDENTIAL"]
+                .iter()
+                .any(|word| upper.contains(word))
+                .then(|| name.into_owned())
+        })
+        .collect::<Vec<_>>();
+    let credential_removals = credential_names
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     for target in &config.targets {
         println!("Building {target}");
         let target_started = Instant::now();
@@ -268,15 +398,42 @@ pub fn build(
         // build scripts and proc macros isolated so a later image never tries
         // to execute artifacts produced by an earlier one.
         let target_build_dir = target_dir.join(target);
-        let args = cross_arguments(project, config, target, &target_build_dir);
+        let (program, args, reported_root) = if is_apple(target) {
+            (
+                engine,
+                apple_arguments(root, &target_build_dir, project, config, target, engine)?,
+                Path::new("/output"),
+            )
+        } else {
+            let mut args = cross_arguments(project, config, target, &target_build_dir);
+            if !config.bundles.is_empty() {
+                args.push("--message-format=json-render-diagnostics".into());
+            }
+            (
+                cross.ok_or_else(|| {
+                    Error("cross is missing (looked for cross and cargo-cross)".into())
+                })?,
+                args,
+                Path::new("/target"),
+            )
+        };
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        runner.output_with(cross, &borrowed, root, &environment, &[])?;
+        let messages =
+            runner.output_with(program, &borrowed, root, &environment, &credential_removals)?;
+        let reported = cargo_executables(&messages);
         let mut binaries = Vec::new();
         for name in &project.binaries {
-            let binary = target_build_dir
-                .join(target)
-                .join(profile_dir)
-                .join(policy::binary_filename(name, target));
+            let binary = if is_apple(target) || !config.bundles.is_empty() {
+                let reported = reported
+                    .get(name)
+                    .ok_or_else(|| Error(format!("Cargo did not report executable for {name}")))?;
+                resolve_executable(reported, reported_root, &target_build_dir)?
+            } else {
+                target_build_dir
+                    .join(target)
+                    .join(profile_dir)
+                    .join(policy::binary_filename(name, target))
+            };
             let metadata = fs::symlink_metadata(&binary).map_err(|_| {
                 Error(format!(
                     "Build did not produce a regular binary: {}",
@@ -289,6 +446,9 @@ pub fn build(
                     binary.display()
                 )));
             }
+            if is_apple(target) {
+                crate::macho::verify_path(&binary, target, &config.apple.deployment_target)?;
+            }
             binaries.push((name.clone(), binary));
         }
         outputs.push(TargetOutputs {
@@ -300,14 +460,31 @@ pub fn build(
             target_started.elapsed().as_secs_f64()
         ));
     }
+    let label = if config.targets.iter().all(|target| !is_apple(target)) {
+        "Cross builds"
+    } else {
+        "Release builds"
+    };
     ui::success(format_args!(
-        "Cross builds complete in {:.1}s",
+        "{label} complete in {:.1}s",
         builds_started.elapsed().as_secs_f64()
     ));
     if let Some(fingerprint) = fingerprint {
         let cache = BuildCache {
+            outputs: Some(outputs.clone()),
             fingerprint,
             target_dir,
+            output_hashes: outputs
+                .iter()
+                .flat_map(|output| {
+                    output.binaries.iter().map(|(name, path)| {
+                        Ok((
+                            format!("{}/{}", output.target, name),
+                            crate::package::checksum(path)?,
+                        ))
+                    })
+                })
+                .collect::<Result<_, Error>>()?,
         };
         let encoded = serde_json::to_vec_pretty(&cache)
             .map_err(|e| Error(format!("cannot encode release build cache: {e}")))?;
@@ -357,6 +534,37 @@ fn cached_outputs(
         Ok(path) if path.starts_with(&base) => path,
         _ => return Ok(None),
     };
+    if let Some(outputs) = cache.outputs {
+        if outputs.len() != config.targets.len() {
+            return Ok(None);
+        }
+        for (output, target) in outputs.iter().zip(&config.targets) {
+            if &output.target != target || output.binaries.len() != project.binaries.len() {
+                return Ok(None);
+            }
+            for ((name, path), expected_name) in output.binaries.iter().zip(&project.binaries) {
+                let expected_hash = cache.output_hashes.get(&format!("{target}/{name}"));
+                if name != expected_name
+                    || !path.is_file()
+                    || path.is_symlink()
+                    || !fs::canonicalize(path).is_ok_and(|p| p.starts_with(&base))
+                    || expected_hash.is_none_or(|hash| match crate::package::checksum(path) {
+                        Ok(actual) => &actual != hash,
+                        Err(_) => true,
+                    })
+                {
+                    return Ok(None);
+                }
+                if is_apple(target)
+                    && crate::macho::verify_path(path, target, &config.apple.deployment_target)
+                        .is_err()
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        return Ok(Some(outputs));
+    }
     let profile_dir = if config.profile == "dev" {
         "debug"
     } else {
@@ -390,6 +598,48 @@ fn cached_outputs(
     Ok(Some(outputs))
 }
 
+fn resolve_executable(
+    reported: &Path,
+    reported_root: &Path,
+    target_dir: &Path,
+) -> Result<PathBuf, Error> {
+    // Cross mounts the selected --target-dir at /target inside its container.
+    // Remap the reported artifact, not a guessed profile/binary layout.
+    let path = match reported.strip_prefix(reported_root) {
+        Ok(relative) => target_dir.join(relative),
+        Err(_) => reported.to_path_buf(),
+    };
+    let base = fs::canonicalize(target_dir)?;
+    let resolved = fs::canonicalize(&path)?;
+    if !resolved.starts_with(base) || fs::symlink_metadata(&path)?.file_type().is_symlink() {
+        return Err(Error(
+            "Cargo executable is outside the fresh target directory or is a symlink".into(),
+        ));
+    }
+    Ok(resolved)
+}
+
+fn cargo_executables(messages: &[u8]) -> std::collections::BTreeMap<String, PathBuf> {
+    String::from_utf8_lossy(messages)
+        .lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            if value["reason"] != "compiler-artifact"
+                || !value["target"]["kind"]
+                    .as_array()?
+                    .iter()
+                    .any(|k| k == "bin")
+            {
+                return None;
+            }
+            Some((
+                value["target"]["name"].as_str()?.to_owned(),
+                PathBuf::from(value["executable"].as_str()?),
+            ))
+        })
+        .collect()
+}
+
 fn short_commit(commit: &str) -> &str {
     commit.get(..12).unwrap_or(commit)
 }
@@ -414,6 +664,7 @@ mod tests {
 
     fn test_project(target_directory: PathBuf) -> SelectedPackage {
         SelectedPackage {
+            workspace_root: PathBuf::from("/workspace"),
             name: "cli".into(),
             version: "0.1.0".into(),
             binaries: vec!["cli".into(), "helper".into()],
@@ -425,6 +676,9 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
+            bundles: Vec::new(),
+            features: Vec::new(),
+            apple: crate::config::AppleConfig::default(),
             targets: vec!["x86_64-pc-windows-gnu".into()],
             profile: "release".into(),
             locked: true,
@@ -466,6 +720,62 @@ mod tests {
     }
 
     #[test]
+    fn apple_container_arguments_are_pinned_noninteractive_and_path_safe() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("checkout with spaces é");
+        let output = temporary.path().join("output with spaces");
+        fs::create_dir(&root).unwrap();
+        let mut config = test_config();
+        config.targets = vec!["aarch64-apple-darwin".into()];
+        config.features = vec!["serial".into(), "ui".into()];
+        let args = apple_arguments(
+            &root,
+            &output,
+            &test_project(PathBuf::from("target")),
+            &config,
+            "aarch64-apple-darwin",
+            "podman",
+        )
+        .unwrap();
+        assert_eq!(args[0], "run");
+        assert!(args.contains(&"--rm".into()));
+        assert!(args.contains(&"--userns=keep-id".into()));
+        assert!(args.contains(&format!("{}:/io", root.display())));
+        assert!(args.contains(&format!("{}:/output", output.display())));
+        assert!(args.contains(&config.apple.image));
+        assert!(args.contains(&"MACOSX_DEPLOYMENT_TARGET=13.0".into()));
+        assert!(args.contains(&"SDKROOT=/opt/MacOSX11.3.sdk".into()));
+        assert!(args
+            .windows(2)
+            .any(|args| args == ["--features", "serial,ui"]));
+        assert!(args.windows(2).any(|args| args == ["--package", "cli"]));
+        assert!(args
+            .windows(2)
+            .any(|args| args == ["--target", "aarch64-apple-darwin"]));
+        assert!(!args.iter().any(|arg| arg.contains("sock") || arg == "-it"));
+
+        let docker = apple_arguments(
+            &root,
+            &output,
+            &test_project(PathBuf::from("target")),
+            &config,
+            "aarch64-apple-darwin",
+            "docker",
+        )
+        .unwrap();
+        assert!(!docker.contains(&"--userns=keep-id".into()));
+    }
+
+    #[test]
+    fn backend_mapping_only_routes_supported_apple_targets_to_zig() {
+        assert!(is_apple("aarch64-apple-darwin"));
+        assert!(is_apple("x86_64-apple-darwin"));
+        assert!(!is_apple("x86_64-unknown-linux-gnu"));
+        assert!(!is_apple("x86_64-pc-windows-gnu"));
+        assert!(!is_apple("i686-apple-darwin"));
+    }
+
+    #[test]
     fn completed_clean_build_is_reused_only_for_the_same_fingerprint() {
         let temporary = tempfile::tempdir().unwrap();
         let target_base = temporary.path().join("binstall-publisher");
@@ -482,7 +792,7 @@ mod tests {
             fs::write(path, binary).unwrap();
         }
         let fingerprint = BuildFingerprint {
-            format_version: 1,
+            format_version: 2,
             commit: "0123456789abcdef".into(),
             package: project.name.clone(),
             version: project.version.clone(),
@@ -490,15 +800,21 @@ mod tests {
             targets: config.targets.clone(),
             profile: config.profile.clone(),
             locked: config.locked,
+            features: config.features.clone(),
             engine: "podman".into(),
             toolchain: Some("stable-x86_64-unknown-linux-gnu".into()),
+            apple_image: config.apple.image.clone(),
+            apple_deployment_target: config.apple.deployment_target.clone(),
+            apple_sdk_root: config.apple.sdk_root.clone(),
         };
         let cache_path = target_base.join("release-build.json");
         fs::write(
             &cache_path,
             serde_json::to_vec(&BuildCache {
+                outputs: None,
                 fingerprint: fingerprint.clone(),
                 target_dir,
+                output_hashes: std::collections::BTreeMap::new(),
             })
             .unwrap(),
         )
@@ -511,13 +827,37 @@ mod tests {
 
         let different = BuildFingerprint {
             commit: "different".into(),
-            ..fingerprint
+            ..fingerprint.clone()
         };
         assert!(
             cached_outputs(&target_base, &cache_path, &different, &project, &config)
                 .unwrap()
                 .is_none()
         );
+        for incompatible in [
+            BuildFingerprint {
+                features: vec!["new-feature".into()],
+                ..fingerprint.clone()
+            },
+            BuildFingerprint {
+                apple_deployment_target: "14.0".into(),
+                ..fingerprint.clone()
+            },
+            BuildFingerprint {
+                apple_image: format!("example.invalid/compiler@sha256:{}", "a".repeat(64)),
+                ..fingerprint.clone()
+            },
+            BuildFingerprint {
+                engine: "docker".into(),
+                ..fingerprint.clone()
+            },
+        ] {
+            assert!(
+                cached_outputs(&target_base, &cache_path, &incompatible, &project, &config)
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
     #[test]
     fn cross_pre_build_is_allowed_but_other_executable_options_are_rejected() {

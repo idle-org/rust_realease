@@ -1,10 +1,12 @@
 //! Entry point for the incremental Rust replacement.
 
 mod build;
+mod bundle;
 mod cli;
 mod config;
 mod error;
 mod gitea;
+mod macho;
 mod manifest;
 mod model;
 mod package;

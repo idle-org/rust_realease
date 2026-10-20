@@ -7,6 +7,7 @@ use std::{fs, path::Path};
 pub const PROJECT_CONFIG_FILE: &str = "rust-release.toml";
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct FileConfig {
     build: Option<Build>,
     release: Option<Release>,
@@ -16,30 +17,46 @@ struct FileConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Build {
     targets: Option<Vec<String>>,
     profile: Option<String>,
     locked: Option<bool>,
+    features: Option<Vec<String>>,
+    apple: Option<Apple>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct Apple {
+    image: Option<String>,
+    deployment_target: Option<String>,
+    sdk_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Release {
     #[serde(rename = "tag-prefix")]
     tag_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Package {
+    bundles: Option<Vec<crate::bundle::Bundle>>,
     format: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Repository {
     #[serde(default)]
     fallbacks: Vec<FileRepositoryFallback>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileRepositoryFallback {
     origin: String,
     #[serde(rename = "fallback-url")]
@@ -47,6 +64,7 @@ struct FileRepositoryFallback {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Gitea {
     #[serde(rename = "token-env")]
     token_env: Option<String>,
@@ -60,13 +78,35 @@ pub struct RepositoryFallback {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub bundles: Vec<crate::bundle::Bundle>,
     pub targets: Vec<String>,
     pub profile: String,
     pub locked: bool,
+    pub features: Vec<String>,
+    pub apple: AppleConfig,
     pub tag_prefix: String,
     pub token_env: String,
     pub package_format: PackageFormat,
     pub repository_fallbacks: Vec<RepositoryFallback>,
+}
+
+pub const DEFAULT_APPLE_IMAGE: &str = "ghcr.io/rust-cross/cargo-zigbuild@sha256:9b4f6b3eb9e8f9fefb3960fe288ddba576627d66d9eff851ce7f62d2455564a5";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppleConfig {
+    pub image: String,
+    pub deployment_target: String,
+    pub sdk_root: String,
+}
+
+impl Default for AppleConfig {
+    fn default() -> Self {
+        Self {
+            image: DEFAULT_APPLE_IMAGE.into(),
+            deployment_target: "13.0".into(),
+            sdk_root: "/opt/MacOSX11.3.sdk".into(),
+        }
+    }
 }
 
 impl Config {
@@ -109,6 +149,7 @@ pub struct Overrides {
     pub unlocked: bool,
     pub tag_prefix: Option<String>,
     pub package_format: Option<PackageFormat>,
+    pub features: Vec<String>,
 }
 
 pub fn load(
@@ -173,6 +214,21 @@ fn merge_build(current: &mut Option<Build>, later: Option<Build>) {
         if later.locked.is_some() {
             current.locked = later.locked;
         }
+        if later.features.is_some() {
+            current.features = later.features;
+        }
+        if let Some(later) = later.apple {
+            let apple = current.apple.get_or_insert_with(Apple::default);
+            if later.image.is_some() {
+                apple.image = later.image;
+            }
+            if later.deployment_target.is_some() {
+                apple.deployment_target = later.deployment_target;
+            }
+            if later.sdk_root.is_some() {
+                apple.sdk_root = later.sdk_root;
+            }
+        }
     }
 }
 
@@ -188,6 +244,9 @@ fn merge_release(current: &mut Option<Release>, later: Option<Release>) {
 fn merge_package(current: &mut Option<Package>, later: Option<Package>) {
     if let Some(later) = later {
         let current = current.get_or_insert_with(Package::default);
+        if later.bundles.is_some() {
+            current.bundles = later.bundles;
+        }
         if later.format.is_some() {
             current.format = later.format;
         }
@@ -214,6 +273,7 @@ fn merge_gitea(current: &mut Option<Gitea>, later: Option<Gitea>) {
 
 fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
     let build = file.build.unwrap_or_default();
+    let apple = build.apple.clone().unwrap_or_default();
     let release = file.release.unwrap_or_default();
     let package = file.package.unwrap_or_default();
     let repository = file.repository.unwrap_or_default();
@@ -244,6 +304,7 @@ fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
         });
     }
     let mut config = Config {
+        bundles: package.bundles.unwrap_or_default(),
         targets: if overrides.targets.is_empty() {
             build.targets.unwrap_or_else(|| {
                 [
@@ -266,6 +327,18 @@ fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
         } else {
             build.locked.unwrap_or(true)
         },
+        features: if overrides.features.is_empty() {
+            build.features.unwrap_or_default()
+        } else {
+            overrides.features
+        },
+        apple: AppleConfig {
+            image: apple.image.unwrap_or_else(|| DEFAULT_APPLE_IMAGE.into()),
+            deployment_target: apple.deployment_target.unwrap_or_else(|| "13.0".into()),
+            sdk_root: apple
+                .sdk_root
+                .unwrap_or_else(|| "/opt/MacOSX11.3.sdk".into()),
+        },
         tag_prefix: overrides
             .tag_prefix
             .or(release.tag_prefix)
@@ -286,6 +359,19 @@ fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
         }
     }
     config.targets = unique;
+    let mut unique_features = Vec::new();
+    for feature in config.features {
+        if !valid_feature(&feature) {
+            return Err(Error(format!(
+                "invalid Cargo feature name in build.features: {feature:?}."
+            )));
+        }
+        if !unique_features.contains(&feature) {
+            unique_features.push(feature);
+        }
+    }
+    config.features = unique_features;
+    validate_apple(&config.apple)?;
     if !valid_profile(&config.profile) {
         return Err(Error("build.profile must be a Cargo profile name.".into()));
     }
@@ -307,7 +393,48 @@ fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
     Ok(config)
 }
 
-fn valid_target(s: &str) -> bool {
+fn validate_apple(apple: &AppleConfig) -> Result<(), Error> {
+    let digest = apple
+        .image
+        .rsplit_once("@sha256:")
+        .map(|(_, digest)| digest);
+    if digest.is_none_or(|digest| {
+        digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    }) || apple.image.bytes().any(|b| b.is_ascii_whitespace())
+    {
+        return Err(Error(
+            "build.apple.image must use an immutable @sha256:<64 lowercase hex> digest.".into(),
+        ));
+    }
+    let mut version = apple.deployment_target.split('.');
+    let major = version.next().and_then(|value| value.parse::<u16>().ok());
+    let minor = version.next().and_then(|value| value.parse::<u8>().ok());
+    let patch = version
+        .next()
+        .map_or(Some(0), |value| value.parse::<u8>().ok());
+    if major
+        .zip(minor)
+        .zip(patch)
+        .is_none_or(|((major, _), _)| major < 13)
+        || version.next().is_some()
+    {
+        return Err(Error("build.apple.deployment-target must be a macOS version at least 13.0 (for example \"13.0\").".into()));
+    }
+    if !apple.sdk_root.starts_with('/')
+        || apple.sdk_root.contains(['\0', '\n', '\r'])
+        || apple.sdk_root.split('/').any(|part| part == "..")
+    {
+        return Err(Error(
+            "build.apple.sdk-root must be an absolute container path without '..'.".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn valid_target(s: &str) -> bool {
     s.split('-').count() >= 3
         && s.split('-').all(|part| {
             !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -318,6 +445,12 @@ fn valid_profile(s: &str) -> bool {
     s.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+}
+
+fn valid_feature(s: &str) -> bool {
+    s.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_+-".contains(&b))
 }
 
 fn valid_env(s: &str) -> bool {
@@ -395,5 +528,38 @@ mod tests {
         let config = load(None, project.path(), Overrides::default()).unwrap();
         assert_eq!(config.profile, "project-profile");
         assert_eq!(config.targets.len(), 3);
+    }
+
+    #[test]
+    fn apple_settings_and_features_are_typed_layered_and_validated() {
+        let config = parse(
+            &format!(
+                "[build]\ntargets=['aarch64-apple-darwin']\nfeatures=['serial','ui']\n[build.apple]\nimage='{DEFAULT_APPLE_IMAGE}'\ndeployment-target='13.2'\nsdk-root='/opt/MacOSX13.sdk'\n"
+            ),
+            Overrides::default(),
+        )
+        .unwrap();
+        assert_eq!(config.features, ["serial", "ui"]);
+        assert_eq!(config.apple.deployment_target, "13.2");
+        assert_eq!(config.apple.sdk_root, "/opt/MacOSX13.sdk");
+
+        let overridden = parse(
+            "[build]\ntargets=['x86_64-apple-darwin']\nfeatures=['old']\n",
+            Overrides {
+                features: vec!["new".into()],
+                ..Overrides::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(overridden.features, ["new"]);
+
+        for source in [
+            "[build.apple]\nimage='cargo-zigbuild:latest'",
+            &format!("[build.apple]\nimage='{DEFAULT_APPLE_IMAGE}'\ndeployment-target='12.0'"),
+            &format!("[build.apple]\nimage='{DEFAULT_APPLE_IMAGE}'\nsdk-root='../sdk'"),
+            "[build]\nfeatures=['bad feature']",
+        ] {
+            assert!(parse(source, Overrides::default()).is_err(), "{source}");
+        }
     }
 }

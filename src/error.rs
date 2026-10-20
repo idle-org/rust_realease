@@ -8,3 +8,9 @@ impl fmt::Display for Error {
         f.write_str(&self.0)
     }
 }
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self(e.to_string())
+    }
+}

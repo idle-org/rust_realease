@@ -25,6 +25,14 @@ pub fn asset_url(repository: &str, tag: &str, filename: &str) -> String {
 }
 
 pub fn verify_archive(path: &Path, artifact: &Artifact) -> Result<(), Error> {
+    if let ArtifactContents::Bundle {
+        root,
+        format,
+        entries,
+    } = &artifact.contents
+    {
+        return crate::bundle::verify(path, root, *format, entries);
+    }
     let ArtifactContents::Archive { root, binaries } = &artifact.contents else {
         return Err(Error(format!("{} is not an archive.", path.display())));
     };
@@ -91,6 +99,63 @@ pub fn verify_archive(path: &Path, artifact: &Artifact) -> Result<(), Error> {
         )));
     }
     Ok(())
+}
+
+pub fn verify_apple_artifact(
+    path: &Path,
+    artifact: &Artifact,
+    deployment_target: &str,
+) -> Result<(), Error> {
+    match &artifact.contents {
+        ArtifactContents::Binary => {
+            crate::macho::verify_path(path, &artifact.target, deployment_target)
+        }
+        ArtifactContents::Archive { binaries, .. } => {
+            let gzip = GzDecoder::new(
+                File::open(path)
+                    .map_err(|e| Error(format!("cannot open {}: {e}", path.display())))?,
+            );
+            let mut archive = tar::Archive::new(gzip);
+            let mut checked = 0_usize;
+            for entry in archive.entries().map_err(|e| {
+                Error(format!(
+                    "cannot inspect Apple archive {}: {e}",
+                    path.display()
+                ))
+            })? {
+                let mut entry = entry.map_err(|e| Error(format!("invalid Apple archive: {e}")))?;
+                if !entry.header().entry_type().is_file() {
+                    continue;
+                }
+                let name = entry
+                    .path()
+                    .map_err(|e| Error(format!("invalid Apple archive path: {e}")))?;
+                let filename = name.file_name().and_then(|name| name.to_str());
+                if !filename.is_some_and(|name| binaries.iter().any(|binary| binary == name)) {
+                    return Err(Error(format!(
+                        "unexpected Apple executable in {}",
+                        path.display()
+                    )));
+                }
+                let mut bytes = Vec::new();
+                entry
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| Error(format!("cannot read Apple archive member: {e}")))?;
+                crate::macho::verify(&bytes, &artifact.target, deployment_target)?;
+                checked += 1;
+            }
+            if checked != binaries.len() {
+                return Err(Error(format!(
+                    "{} does not contain every declared Apple binary",
+                    path.display()
+                )));
+            }
+            Ok(())
+        }
+        ArtifactContents::Bundle { .. } => Err(Error(
+            "Apple named bundles require an explicit Mach-O deployment policy".into(),
+        )),
+    }
 }
 
 fn member_name(header: &[u8]) -> Result<String, Error> {
@@ -199,7 +264,7 @@ pub fn verify_published(
         }
         if let Some(artifact) = artifacts.iter().find(|a| a.path == local) {
             match &artifact.contents {
-                ArtifactContents::Archive { .. } => {
+                ArtifactContents::Archive { .. } | ArtifactContents::Bundle { .. } => {
                     verify_archive(&path, artifact)?;
                     println!("Verified URL, checksum and archive: {}", artifact.target);
                 }
@@ -344,6 +409,7 @@ mod tests {
         let root = manifest.parent().unwrap().to_path_buf();
         let name = required("RUST_RELEASE_LIVE_NAME");
         let project = SelectedPackage {
+            workspace_root: std::path::PathBuf::new(),
             name: name.clone(),
             version: required("RUST_RELEASE_LIVE_VERSION"),
             binaries: vec![name],
@@ -557,6 +623,7 @@ mod tests {
             }
         });
         let project = SelectedPackage {
+            workspace_root: std::path::PathBuf::new(),
             name: "demo".into(),
             version: "0.1.0".into(),
             binaries: vec!["demo".into()],
@@ -607,6 +674,7 @@ mod tests {
             .to_string()
             .contains("unexpected members"));
         let project = SelectedPackage {
+            workspace_root: std::path::PathBuf::new(),
             name: "demo".into(),
             version: "0.1.0".into(),
             binaries: vec!["demo".into()],

@@ -473,6 +473,9 @@ mod tests {
         let runner = Runner::new("GITEA_TOKEN");
         let project = project::inspect(root.to_str().unwrap(), None, &runner).unwrap();
         let config = Config {
+            features: Vec::new(),
+            apple: crate::config::AppleConfig::default(),
+            bundles: Vec::new(),
             targets: vec!["x86_64-unknown-linux-musl".into()],
             profile: "release".into(),
             locked: true,
@@ -534,6 +537,9 @@ mod tests {
             .unwrap();
         let project = project::inspect(root.to_str().unwrap(), None, &runner).unwrap();
         let config = Config {
+            features: Vec::new(),
+            apple: crate::config::AppleConfig::default(),
+            bundles: Vec::new(),
             targets: vec!["x86_64-unknown-linux-musl".into()],
             profile: "release".into(),
             locked: true,

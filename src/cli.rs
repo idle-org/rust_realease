@@ -27,6 +27,9 @@ pub struct Cli {
     pub target: Vec<String>,
     #[arg(long)]
     pub profile: Option<String>,
+    /// Enable Cargo features for source checks and every release backend.
+    #[arg(long, value_delimiter = ',')]
+    pub features: Vec<String>,
     #[arg(long, conflicts_with = "unlocked")]
     pub locked: bool,
     #[arg(long)]
@@ -142,6 +145,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             unlocked: args.unlocked,
             tag_prefix: args.tag_prefix,
             package_format: args.artifact_format,
+            features: args.features,
         },
     )?;
     let runner = Runner::new(&config.token_env)
@@ -152,6 +156,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         .to_str()
         .ok_or_else(|| Error("Project path is not UTF-8.".into()))?;
     let selected = project::inspect(root, args.package.as_deref(), &runner)?;
+    crate::bundle::plan(&config, &selected, &selected.workspace_root)?;
     let publishing = !args.prepare_repo
         && !args.dry_run
         && args
@@ -267,6 +272,14 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         return Ok(());
     }
     for target in &config.targets {
+        if build::is_apple(target) {
+            println!(
+                "{target} build backend: cargo-zigbuild container {} (SDKROOT={}, MACOSX_DEPLOYMENT_TARGET={})",
+                config.apple.image, config.apple.sdk_root, config.apple.deployment_target
+            );
+        } else {
+            println!("{target} build backend: Cross");
+        }
         if config.package_format.archives() {
             println!(
                 "{target} archive: {} ({})",
@@ -350,7 +363,8 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     if args.stop_after == Some(Stage::Verify) {
         return Ok(());
     }
-    let engine = engine.ok_or_else(|| Error("No usable Cross container backend.".into()))?;
+    let engine =
+        engine.ok_or_else(|| Error("No usable Docker or Podman container backend.".into()))?;
     let commit = project::head_commit(&checkout.root, &runner)?;
     let checkout_clean = runner
         .text(
@@ -371,13 +385,41 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     if args.stop_after == Some(Stage::Build) {
         return Ok(());
     }
-    let (artifacts, sums) = crate::package::package(
-        &checkout.root,
-        &selected.name,
-        &selected.version,
-        &outputs,
-        config.package_format,
-    )?;
+    let (artifacts, sums) = if config.bundles.is_empty() {
+        crate::package::package(
+            &checkout.root,
+            &selected.name,
+            &selected.version,
+            &outputs,
+            config.package_format,
+        )?
+    } else {
+        crate::bundle::assemble(
+            &selected.workspace_root,
+            &selected,
+            &config,
+            &outputs,
+            &commit,
+            !checkout_clean,
+            &runner,
+        )?
+    };
+    for artifact in &artifacts {
+        if matches!(
+            artifact.contents,
+            crate::package::ArtifactContents::Archive { .. }
+                | crate::package::ArtifactContents::Bundle { .. }
+        ) {
+            verify::verify_archive(&artifact.path, artifact)?;
+        }
+        if build::is_apple(&artifact.target) {
+            verify::verify_apple_artifact(
+                &artifact.path,
+                artifact,
+                &config.apple.deployment_target,
+            )?;
+        }
+    }
     ui::detail(
         "Artifacts",
         sums.parent().map_or_else(
@@ -391,6 +433,11 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             artifact.target,
             artifact.path.display()
         ));
+    }
+    for target in &config.targets {
+        if build::is_apple(target) {
+            println!("{target} checks: Mach-O architecture, macOS deployment minimum {}, system dynamic dependencies, archive layout and checksum passed; runtime skipped (no compatible macOS runner)", config.apple.deployment_target);
+        }
     }
     if args.stop_after == Some(Stage::Package) {
         return Ok(());

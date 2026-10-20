@@ -86,6 +86,126 @@ impl Runner {
         Ok(output.stdout)
     }
 
+    pub fn hook(
+        &self,
+        argv: &[String],
+        cwd: &Path,
+        paths: (&Path, &Path, &Path),
+        timeout: u64,
+        label: &str,
+    ) -> Result<(), Error> {
+        let (context, manifest, tree) = paths;
+        use std::{
+            io::{BufRead, BufReader},
+            process::Stdio,
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            },
+            time::{Duration, Instant},
+        };
+        let args = argv
+            .iter()
+            .map(|a| {
+                a.replace("{context-file}", &context.to_string_lossy())
+                    .replace("{manifest-file}", &manifest.to_string_lossy())
+                    .replace("{bundle-directory}", &tree.to_string_lossy())
+            })
+            .collect::<Vec<_>>();
+        let mut command = Command::new(&args[0]);
+        command
+            .args(&args[1..])
+            .current_dir(cwd)
+            .env_remove("GITEA_TOKEN")
+            .env_remove(&self.token_env)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (name, _) in std::env::vars_os() {
+            let upper = name.to_string_lossy().to_uppercase();
+            if ["TOKEN", "PASSWORD", "SECRET", "CREDENTIAL"]
+                .iter()
+                .any(|s| upper.contains(s))
+            {
+                command.env_remove(name);
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        #[cfg(unix)]
+        let registrations = [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM]
+            .into_iter()
+            .map(|signal| signal_hook::flag::register(signal, Arc::clone(&cancelled)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = (|| {
+            let mut child = command
+                .spawn()
+                .map_err(|e| Error(format!("Cannot start hook [{label}] {args:?}: {e}")))?;
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+            let started = Instant::now();
+            std::thread::scope(|scope| {
+                let stream = |reader: &mut dyn BufRead| {
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        match reader.read_line(&mut line) {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => eprintln!("[{label}] {}", self.redact(line.trim_end())),
+                        }
+                    }
+                };
+                scope.spawn(move || stream(&mut BufReader::new(stdout)));
+                scope.spawn(move || stream(&mut BufReader::new(stderr)));
+                let outcome = loop {
+                    if cancelled.load(Ordering::Relaxed)
+                        || started.elapsed() >= Duration::from_secs(timeout)
+                    {
+                        break Err(Error(format!(
+                            "Hook [{label}] {:?} {}",
+                            args,
+                            if cancelled.load(Ordering::Relaxed) {
+                                "cancelled"
+                            } else {
+                                "timed out"
+                            }
+                        )));
+                    }
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            break if status.success() {
+                                Ok(())
+                            } else {
+                                Err(Error(format!(
+                                    "Hook [{label}] {:?} failed with {status}",
+                                    args
+                                )))
+                            }
+                        }
+                        Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                        Err(e) => break Err(Error(e.to_string())),
+                    }
+                };
+                // Kill the group even after the leader exits: descendants may retain pipes.
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                outcome
+            })
+        })();
+        #[cfg(unix)]
+        for id in registrations {
+            signal_hook::low_level::unregister(id);
+        }
+        result.map_err(|e: Error| Error(self.redact(&e.to_string())))
+    }
+
     pub fn text(&self, program: &str, args: &[&str], cwd: &Path) -> Result<String, Error> {
         let bytes = self.output(program, args, cwd)?;
         String::from_utf8(bytes)

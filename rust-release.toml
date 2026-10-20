@@ -1,3 +1,18 @@
 [[repository.fallbacks]]
 origin = "git@git.dandaedre.com:idle-org/rust_realease.git"
 fallback-url = "https://proxy.dandaedre.com/gitea/idle-org/rust_realease"
+
+[build]
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+]
+profile = "release"
+locked = true
+
+[build.apple]
+image = "ghcr.io/rust-cross/cargo-zigbuild@sha256:9b4f6b3eb9e8f9fefb3960fe288ddba576627d66d9eff851ce7f62d2455564a5"
+deployment-target = "13.0"
+sdk-root = "/opt/MacOSX11.3.sdk"

@@ -270,13 +270,17 @@ assert '--message-format=json-render-diagnostics' in a
 out=pathlib.Path(a[a.index('--target-dir')+1])/'actual output é'
 out.mkdir(parents=True)
 binary=out/'demo'
+deps=out/'deps'
+deps.mkdir()
+backing=deps/'demo-build-id'
 elf=bytearray(64)
 elf[:4]=b'\x7fELF'
 elf[4]=2
 elf[5]=1
 elf[18:20]=(62).to_bytes(2,'little')
-binary.write_bytes(elf)
-binary.chmod(0o755)
+backing.write_bytes(elf)
+backing.chmod(0o751)
+os.link(backing,binary)
 print(json.dumps(dict(reason='compiler-artifact',target=dict(name='demo',kind=['bin']),executable="/target/actual output é/demo")))
 with open(os.environ['CROSS_LOG'],'a') as f: f.write('build\n')
 "#,

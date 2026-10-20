@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -391,6 +391,52 @@ fn add(
     });
     Ok(())
 }
+fn add_cargo(
+    inputs: &mut Vec<Input>,
+    path: &Path,
+    staging: &Path,
+    dest: &str,
+    target: &str,
+    map: &mut BTreeMap<String, ()>,
+) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return fail(format!(
+            "Not a regular Cargo executable: {}",
+            path.display()
+        ));
+    }
+    insert_destination(map, dest, windows(target))?;
+    architecture(path, target)?;
+    let source_hash = package::checksum(path)?;
+    fs::create_dir_all(staging)?;
+    let mut staged = tempfile::NamedTempFile::new_in(staging)?;
+    let mut source = fs::File::open(path)?;
+    std::io::copy(&mut source, staged.as_file_mut())?;
+    staged.as_file_mut().flush()?;
+    fs::set_permissions(staged.path(), metadata.permissions())?;
+    let staged_hash = package::checksum(staged.path())?;
+    if staged_hash != source_hash || package::checksum(path)? != source_hash {
+        return fail(format!(
+            "Cargo executable changed during staging: {}",
+            path.display()
+        ));
+    }
+    regular(staged.path())?;
+    architecture(staged.path(), target)?;
+    let (_, staged_path) = staged
+        .keep()
+        .map_err(|error| Error(format!("cannot retain staged Cargo executable: {error}")))?;
+    inputs.push(Input {
+        source: staged_path,
+        entry: Entry {
+            destination: dest.into(),
+            sha256: source_hash,
+            mode: 0o755,
+        },
+    });
+    Ok(())
+}
 fn add_tree(
     inputs: &mut Vec<Input>,
     path: &Path,
@@ -488,6 +534,7 @@ pub fn assemble(
         config.package_format,
     )?;
     let artifact_dir = old_sums.parent().unwrap().to_path_buf();
+    let cargo_stage = stage.path().join("cargo-inputs");
     let mut records = Vec::new();
     for b in &config.bundles {
         for output in outputs {
@@ -509,14 +556,14 @@ pub fn assemble(
                     .find(|(n, _)| n == binary)
                     .ok_or_else(|| Error(format!("Missing built binary {binary}")))?
                     .1;
-                // Cargo output is already validated by the build layer; check its target too.
-                add(
+                // Cargo may hardlink this path to release/deps. Copy the validated bytes into
+                // publisher-owned staging while retaining strict link checks for other inputs.
+                add_cargo(
                     &mut inputs,
                     path,
+                    &cargo_stage,
                     &policy::binary_filename(binary, target),
-                    Kind::Executable,
                     target,
-                    None,
                     &mut map,
                 )?;
             }
@@ -688,7 +735,6 @@ pub fn assemble(
     )?;
     // Stable local discovery entry; keep public manifests free of host paths.
     let mut locator = tempfile::NamedTempFile::new_in(&dist)?;
-    use std::io::Write as _;
     locator.write_all(&serde_json::to_vec_pretty(&serde_json::json!({
         "schema_version": 1,
         "manifest": artifact_dir.join("artifact-manifest.json").strip_prefix(&dist).map_err(|e| Error(e.to_string()))?,
@@ -999,6 +1045,40 @@ required-destinations=['runtime{binary-ext}','LICENSES/runtime/LICENSE.txt','LIC
             fs::hard_link(&outputs[0].binaries[0].1, &link).unwrap();
             assert!(regular(&link).is_err());
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn hardlinked_cargo_executable_is_copied_to_independent_staging() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let (temp, _, _, outputs) = fixture();
+        let source = &outputs[0].binaries[0].1;
+        fs::set_permissions(source, fs::Permissions::from_mode(0o751)).unwrap();
+        let other_link = temp.path().join("cargo-deps-link");
+        fs::hard_link(source, &other_link).unwrap();
+        assert_eq!(fs::metadata(source).unwrap().nlink(), 2);
+
+        let mut inputs = Vec::new();
+        add_cargo(
+            &mut inputs,
+            source,
+            &temp.path().join("publisher-staging"),
+            "demo",
+            "x86_64-unknown-linux-gnu",
+            &mut BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(inputs.len(), 1);
+        let staged = &inputs[0].source;
+        assert_eq!(fs::read(staged).unwrap(), fs::read(source).unwrap());
+        assert_eq!(fs::metadata(staged).unwrap().nlink(), 1);
+        assert_eq!(
+            fs::metadata(staged).unwrap().permissions().mode() & 0o777,
+            0o751
+        );
+        assert_eq!(inputs[0].entry.sha256, package::checksum(source).unwrap());
+        assert_eq!(fs::metadata(source).unwrap().nlink(), 2);
     }
     #[test]
     fn failed_hooks_clean_partial_artifacts_and_filter_targets() {

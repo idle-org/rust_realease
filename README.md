@@ -5,7 +5,8 @@
 ![line coverage](https://assets.dandaedre.com/coverage/idle-org/rust_realease/main/coverage.svg)
 
 `rust_realease` builds Rust binary packages for multiple targets and publishes
-them as Gitea release assets. It is intended for maintainers who want
+them as Gitea or GitHub release assets, including mirrored releases sent to
+multiple repositories. It is intended for maintainers who want
 repeatable Cross builds, checksums, cargo-binstall archives, and post-upload
 verification without maintaining a separate release pipeline.
 
@@ -33,7 +34,7 @@ cargo install --path . --locked
 ## Quick start
 
 Preview a local project without changing files, building binaries, or
-contacting Gitea:
+contacting a release service:
 
 ```bash
 rust_realease ./my-tool --dry-run
@@ -54,28 +55,34 @@ Build local artifacts through the package stage with:
 rust_realease ./my-tool --compile-only
 ```
 
-This mode does not require a Gitea token or contact Gitea. Artifacts and
+This mode does not require a release token or contact Gitea or GitHub. Artifacts and
 `SHA256SUMS` are written under `dist/release-*/`. A later publication with the
 same clean commit and build settings reuses the completed target builds; pass
 `--recompile` to rebuild them instead.
 
-## Publish a Gitea release
+## Publish a release
 
 The package version must match a local tag, and the same tag must already
 exist on the remote. Publication also requires a clean checkout and an HTTPS
-Gitea release destination.
+Gitea or GitHub release destination.
 
-Store a Gitea access token in a single-line UTF-8 file and pass it directly:
+For one destination, store an access token in a single-line UTF-8 file:
 
 ```bash
 rust_realease ./my-tool --token-file ../gitea_token.txt
 ```
 
 The token file takes precedence over the configured token environment
-variable. Without `--token-file`, the default is `GITEA_TOKEN`. Grant the token
+variable. Without `--token-file`, the defaults are `GITEA_TOKEN` and
+`GITHUB_TOKEN`. Grant the token
 repository read and release write access; preparation pushes also require code
 write access. Tokens are redacted from diagnostics and are not passed to Cargo
 or Cross child processes.
+
+Configure named `[[release.endpoints]]` entries to publish the same release to
+several repositories. Each can use its own `token-env`, or `--token-file` can
+point to a JSON object whose keys match the endpoint names. See the advanced
+guide for the complete configuration and token-file format.
 
 Use `--prepare-repo --dry-run` to preview supported metadata and repository
 preparation before publishing. See the advanced guide for explicit commit,

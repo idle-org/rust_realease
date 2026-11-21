@@ -1,19 +1,22 @@
 use crate::{
     build,
-    config::{self, Overrides, PackageFormat},
+    config::{self, Overrides, PackageFormat, ReleaseEndpoint, ReleaseProvider},
     error::Error,
-    gitea::Gitea,
     manifest,
     model::Stage,
     policy, prepare, project,
+    release::ReleaseClient,
     runner::Runner,
     ui, verify,
 };
 use clap::Parser;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Debug, Parser)]
-#[command(about = "Build and publish Rust binary releases to Gitea", version)]
+#[command(
+    about = "Build and publish Rust binary releases to Gitea and GitHub",
+    version
+)]
 pub struct Cli {
     /// Local directory or Git URL.
     pub source: String,
@@ -82,7 +85,7 @@ pub struct Cli {
     pub cross_image_tag: Option<String>,
     #[arg(long)]
     pub repository_url: Option<String>,
-    /// Read the Gitea access token from a UTF-8 file instead of the configured environment variable.
+    /// Read one plaintext token or a JSON object of endpoint tokens from a UTF-8 file.
     #[arg(long, value_name = "PATH")]
     pub token_file: Option<PathBuf>,
     #[arg(long)]
@@ -118,13 +121,13 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         })?),
         None => args.message.clone(),
     };
-    let file_token = args
+    let file_tokens = args
         .token_file
         .as_deref()
         .map(read_token_file)
         .transpose()?;
     let acquisition_runner = Runner::new("GITEA_TOKEN")
-        .with_secret(file_token.as_deref())
+        .with_secret(file_tokens.as_ref().and_then(TokenFile::plain))
         .with_verbose(args.verbose);
     let checkout = project::acquire_project(
         &args.source,
@@ -149,7 +152,13 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         },
     )?;
     let runner = Runner::new(&config.token_env)
-        .with_secret(file_token.as_deref())
+        .with_token_envs(
+            config
+                .release_endpoints
+                .iter()
+                .map(|endpoint| endpoint.token_env.clone()),
+        )
+        .with_secret(file_tokens.as_ref().and_then(TokenFile::plain))
         .with_verbose(args.verbose);
     let root = checkout
         .root
@@ -206,9 +215,44 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             )
         })?;
     let normalized_candidate = project::normalize_repository(&candidate)?;
-    let repository = config.resolve_repository(&candidate)?;
+    let mut endpoints = config.release_endpoints.clone();
+    if args.repository_url.is_some() && !endpoints.is_empty() {
+        return Err(Error(
+            "--repository-url cannot be combined with configured release.endpoints.".into(),
+        ));
+    }
+    let repository = if let Some(primary) = endpoints.first() {
+        primary.repository.clone()
+    } else {
+        config.resolve_repository(&candidate)?
+    };
+    if endpoints.is_empty() {
+        let provider = if url::Url::parse(&repository)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .as_deref()
+            == Some("github.com")
+        {
+            ReleaseProvider::Github
+        } else {
+            ReleaseProvider::Gitea
+        };
+        endpoints.push(ReleaseEndpoint {
+            name: "default".into(),
+            provider,
+            repository: repository.clone(),
+            token_env: match provider {
+                ReleaseProvider::Gitea => config.token_env.clone(),
+                ReleaseProvider::Github => "GITHUB_TOKEN".into(),
+            },
+        });
+    }
     if repository != normalized_candidate {
-        println!("Repository fallback: {normalized_candidate} -> {repository}");
+        if config.release_endpoints.is_empty() {
+            println!("Repository fallback: {normalized_candidate} -> {repository}");
+        } else {
+            println!("Primary release repository: {repository}");
+        }
     }
     if publishing {
         if let Some(origin) = project::origin_url(&checkout.root, &runner) {
@@ -242,6 +286,11 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
         println!("{}: {actual} -> {:?}", issue.key, issue.expected);
     }
     if args.prepare_repo {
+        let preparation_token = match file_tokens.as_ref() {
+            Some(TokenFile::Plain(token)) => Some(token.as_str()),
+            Some(TokenFile::Named(tokens)) => tokens.get(&endpoints[0].name).map(String::as_str),
+            None => None,
+        };
         return prepare::run(
             &checkout.root,
             &selected,
@@ -250,7 +299,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             prepare::Options {
                 tag: &tag,
                 image_tag: args.cross_image_tag.as_deref(),
-                token: file_token.as_deref(),
+                token: preparation_token,
                 dry_run: args.dry_run,
                 commit: args.commit_preparation,
                 create_tag: args.create_tag,
@@ -306,10 +355,15 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             println!("Binstall {key}: {value}");
         }
     }
-    ui::detail(
-        "Release destination",
-        format_args!("{repository}/releases/tag/{tag}"),
-    );
+    for endpoint in &endpoints {
+        ui::detail(
+            "Release destination",
+            format_args!(
+                "{} ({}) {}/releases/tag/{tag}",
+                endpoint.name, endpoint.provider, endpoint.repository
+            ),
+        );
+    }
     let needs_cross = args.stop_after != Some(Stage::Verify);
     let needs_binstall = config.package_format.archives()
         && !args.skip_binstall_test
@@ -318,15 +372,18 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
             .is_none_or(|stage| stage.order() >= Stage::Binstall.order());
     let publication = if publishing {
         project::validate_checkout_tag(&checkout.root, &tag, &runner)?;
-        let api = match file_token.as_deref() {
-            Some(token) => Gitea::with_token(&repository, token)?,
-            None => Gitea::new(&repository, &config.token_env)?,
-        };
-        let private = api.repository_private()?;
-        if private && needs_binstall {
-            return Err(Error("This repository is private; cargo-binstall cannot verify its private release downloads. Rerun with --skip-binstall-test to verify uploaded assets with Gitea authentication.".into()));
+        validate_token_keys(file_tokens.as_ref(), &endpoints)?;
+        let mut clients = Vec::new();
+        for endpoint in &endpoints {
+            let token = token_for_endpoint(file_tokens.as_ref(), endpoint, endpoints.len())?;
+            let api = ReleaseClient::new(endpoint, &token)?;
+            let private = api.repository_private()?;
+            clients.push((endpoint.clone(), api, private));
         }
-        Some((api, private))
+        if clients.first().is_some_and(|(_, _, private)| *private) && needs_binstall {
+            return Err(Error("The primary release repository is private; cargo-binstall cannot verify its private release downloads. Rerun with --skip-binstall-test to verify uploaded assets with authentication.".into()));
+        }
+        Some(clients)
     } else {
         None
     };
@@ -442,42 +499,62 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     if args.stop_after == Some(Stage::Package) {
         return Ok(());
     }
-    let (api, private) =
+    let clients =
         publication.ok_or_else(|| Error("Publication client was not initialized.".into()))?;
     let release_message =
         release_message_with_macos_workaround(supplied_release_message.as_deref(), &artifacts)?;
-    let release = api.ensure_release(
-        &tag,
-        &commit,
-        args.draft,
-        args.prerelease,
-        release_message.as_deref(),
-        supplied_release_message.is_some(),
-    )?;
-    ui::success(format_args!("Release ready: {tag}"));
+    let mut releases = Vec::new();
+    for (endpoint, api, private) in clients {
+        let release = api.ensure_release(
+            &tag,
+            &commit,
+            args.draft,
+            args.prerelease,
+            release_message.as_deref(),
+            supplied_release_message.is_some(),
+        )?;
+        ui::success(format_args!("Release ready on {}: {tag}", endpoint.name));
+        releases.push((endpoint, api, private, release));
+    }
     if args.stop_after == Some(Stage::Release) {
         return Ok(());
     }
     let mut paths: Vec<&std::path::Path> = artifacts.iter().map(|a| a.path.as_path()).collect();
     paths.push(sums.as_path());
-    api.upload(release.id, &paths, args.replace_assets)?;
+    for (endpoint, api, _, release) in &releases {
+        api.upload(release.id, &paths, args.replace_assets)?;
+        ui::success(format_args!("Assets uploaded to {}", endpoint.name));
+    }
     if args.stop_after == Some(Stage::Upload) {
         return Ok(());
     }
-    if release.draft {
-        return Err(Error("Draft uploaded. Public verification requires publishing the draft; use --stop-after upload for draft workflows.".into()));
+    if releases.iter().any(|(_, _, _, release)| release.draft) {
+        return Err(Error("A draft was uploaded. Public verification requires publishing every draft; use --stop-after upload for draft workflows.".into()));
     }
-    verify::verify_published(
-        &repository,
-        &tag,
-        &artifacts,
-        &sums,
-        if private {
+    for (endpoint, api, private, release) in &releases {
+        let asset_urls = api.asset_urls(release.id)?;
+        let authenticated = if *private {
             Some(api.download_client())
         } else {
             None
-        },
-    )?;
+        };
+        if let Some(asset_urls) = asset_urls.as_ref() {
+            verify::verify_published_with_asset_urls(
+                &endpoint.repository,
+                &tag,
+                &artifacts,
+                &sums,
+                authenticated,
+                Some(asset_urls),
+            )?;
+        } else {
+            verify::verify_published(&endpoint.repository, &tag, &artifacts, &sums, authenticated)?;
+        }
+        ui::success(format_args!(
+            "Published assets verified on {}",
+            endpoint.name
+        ));
+    }
     if config.package_format.archives() && !args.skip_binstall_test {
         verify::verify_binstall(&checkout.root, &selected, &config.targets, &runner)?;
     }
@@ -624,35 +701,107 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn read_token_file(path: &std::path::Path) -> Result<String, Error> {
+#[derive(Debug)]
+enum TokenFile {
+    Plain(String),
+    Named(BTreeMap<String, String>),
+}
+
+impl TokenFile {
+    fn plain(&self) -> Option<&str> {
+        match self {
+            Self::Plain(token) => Some(token),
+            Self::Named(_) => None,
+        }
+    }
+}
+
+fn read_token_file(path: &std::path::Path) -> Result<TokenFile, Error> {
     if !path.is_file() {
         return Err(Error(format!(
-            "Gitea token file is not a regular file: {}",
+            "token file is not a regular file: {}",
             path.display()
         )));
     }
-    let mut token = std::fs::read_to_string(path).map_err(|e| {
-        Error(format!(
-            "cannot read Gitea token file {}: {e}",
-            path.display()
-        ))
-    })?;
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| Error(format!("cannot read token file {}: {e}", path.display())))?;
+    let trimmed = source.trim_end_matches(['\r', '\n']);
+    if trimmed.trim_start().starts_with('{') {
+        let tokens: BTreeMap<String, String> = serde_json::from_str(trimmed)
+            .map_err(|e| Error(format!("invalid JSON token file {}: {e}", path.display())))?;
+        if tokens.is_empty()
+            || tokens
+                .values()
+                .any(|token| token.is_empty() || token.contains(['\r', '\n']))
+        {
+            return Err(Error(format!(
+                "JSON token file must map endpoint names to nonempty single-line tokens: {}",
+                path.display()
+            )));
+        }
+        return Ok(TokenFile::Named(tokens));
+    }
+    let mut token = source;
     while token.ends_with(['\r', '\n']) {
         token.pop();
     }
     if token.is_empty() {
-        return Err(Error(format!(
-            "Gitea token file is empty: {}",
-            path.display()
-        )));
+        return Err(Error(format!("token file is empty: {}", path.display())));
     }
     if token.contains(['\r', '\n']) {
         return Err(Error(format!(
-            "Gitea token file must contain exactly one token: {}",
+            "plaintext token file must contain exactly one token: {}",
             path.display()
         )));
     }
-    Ok(token)
+    Ok(TokenFile::Plain(token))
+}
+
+fn token_for_endpoint(
+    file: Option<&TokenFile>,
+    endpoint: &ReleaseEndpoint,
+    endpoint_count: usize,
+) -> Result<String, Error> {
+    match file {
+        Some(TokenFile::Plain(token)) if endpoint_count == 1 => Ok(token.clone()),
+        Some(TokenFile::Plain(_)) => Err(Error(
+            "A plaintext token file can only be used with one release endpoint; use a JSON object keyed by endpoint name."
+                .into(),
+        )),
+        Some(TokenFile::Named(tokens)) => tokens.get(&endpoint.name).cloned().ok_or_else(|| {
+            Error(format!(
+                "Token file has no token for release endpoint {:?}.",
+                endpoint.name
+            ))
+        }),
+        None => std::env::var(&endpoint.token_env)
+            .ok()
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| {
+                Error(format!(
+                    "Set {} before publishing endpoint {:?}.",
+                    endpoint.token_env, endpoint.name
+                ))
+            }),
+    }
+}
+
+fn validate_token_keys(
+    file: Option<&TokenFile>,
+    endpoints: &[ReleaseEndpoint],
+) -> Result<(), Error> {
+    let Some(TokenFile::Named(tokens)) = file else {
+        return Ok(());
+    };
+    if let Some(unknown) = tokens
+        .keys()
+        .find(|name| !endpoints.iter().any(|endpoint| &endpoint.name == *name))
+    {
+        return Err(Error(format!(
+            "Token file contains unknown release endpoint {unknown:?}."
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -855,12 +1004,33 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("token");
         fs::write(&path, "secret-token\r\n").unwrap();
-        assert_eq!(read_token_file(&path).unwrap(), "secret-token");
+        assert_eq!(
+            read_token_file(&path).unwrap().plain(),
+            Some("secret-token")
+        );
 
         fs::write(&path, "first\nsecond\n").unwrap();
         assert!(read_token_file(&path).is_err());
         fs::write(&path, "\n").unwrap();
         assert!(read_token_file(&path).is_err());
+    }
+
+    #[test]
+    fn token_file_accepts_json_tokens_keyed_by_endpoint() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tokens.json");
+        fs::write(&path, r#"{"github":"github-token","mirror":"gitea-token"}"#).unwrap();
+        let TokenFile::Named(tokens) = read_token_file(&path).unwrap() else {
+            panic!("expected named tokens");
+        };
+        assert_eq!(
+            tokens.get("github").map(String::as_str),
+            Some("github-token")
+        );
+        assert_eq!(
+            tokens.get("mirror").map(String::as_str),
+            Some("gitea-token")
+        );
     }
 
     #[test]

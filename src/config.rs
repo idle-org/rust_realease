@@ -39,6 +39,16 @@ struct Apple {
 struct Release {
     #[serde(rename = "tag-prefix")]
     tag_prefix: Option<String>,
+    endpoints: Option<Vec<FileReleaseEndpoint>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct FileReleaseEndpoint {
+    name: String,
+    provider: ReleaseProvider,
+    repository: String,
+    token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -86,8 +96,33 @@ pub struct Config {
     pub apple: AppleConfig,
     pub tag_prefix: String,
     pub token_env: String,
+    pub release_endpoints: Vec<ReleaseEndpoint>,
     pub package_format: PackageFormat,
     pub repository_fallbacks: Vec<RepositoryFallback>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseProvider {
+    Gitea,
+    Github,
+}
+
+impl std::fmt::Display for ReleaseProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Gitea => "gitea",
+            Self::Github => "github",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseEndpoint {
+    pub name: String,
+    pub provider: ReleaseProvider,
+    pub repository: String,
+    pub token_env: String,
 }
 
 pub const DEFAULT_APPLE_IMAGE: &str = "ghcr.io/rust-cross/cargo-zigbuild@sha256:9b4f6b3eb9e8f9fefb3960fe288ddba576627d66d9eff851ce7f62d2455564a5";
@@ -238,6 +273,9 @@ fn merge_release(current: &mut Option<Release>, later: Option<Release>) {
         if later.tag_prefix.is_some() {
             current.tag_prefix = later.tag_prefix;
         }
+        if later.endpoints.is_some() {
+            current.endpoints = later.endpoints;
+        }
     }
 }
 
@@ -288,6 +326,67 @@ fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
             ))
         }
     };
+    let mut release_endpoints = Vec::new();
+    for endpoint in release.endpoints.clone().unwrap_or_default() {
+        if endpoint.name.is_empty()
+            || !endpoint
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            return Err(Error(
+                "release endpoint names must contain only letters, digits, underscores or hyphens."
+                    .into(),
+            ));
+        }
+        if release_endpoints
+            .iter()
+            .any(|existing: &ReleaseEndpoint| existing.name == endpoint.name)
+        {
+            return Err(Error(format!(
+                "duplicate release endpoint name {:?}.",
+                endpoint.name
+            )));
+        }
+        let repository = project::normalize_repository(&endpoint.repository)
+            .map_err(|e| Error(format!("invalid release endpoint repository: {e}")))?;
+        if !repository.starts_with("https://") {
+            return Err(Error(format!(
+                "release endpoint {:?} repository must use HTTPS.",
+                endpoint.name
+            )));
+        }
+        if endpoint.provider == ReleaseProvider::Github
+            && url::Url::parse(&repository)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .as_deref()
+                != Some("github.com")
+        {
+            return Err(Error(format!(
+                "GitHub endpoint {:?} must use a github.com repository URL.",
+                endpoint.name
+            )));
+        }
+        let token_env = endpoint
+            .token_env
+            .unwrap_or_else(|| match endpoint.provider {
+                ReleaseProvider::Gitea => "GITEA_TOKEN".into(),
+                ReleaseProvider::Github => "GITHUB_TOKEN".into(),
+            });
+        if !valid_env(&token_env) {
+            return Err(Error(format!(
+                "release endpoint {:?} token-env must be an environment variable name.",
+                endpoint.name
+            )));
+        }
+        release_endpoints.push(ReleaseEndpoint {
+            name: endpoint.name,
+            provider: endpoint.provider,
+            repository,
+            token_env,
+        });
+    }
     let mut repository_fallbacks = Vec::new();
     for fallback in repository.fallbacks {
         let origin = project::normalize_repository(&fallback.origin)
@@ -344,6 +443,7 @@ fn finish(file: FileConfig, overrides: Overrides) -> Result<Config, Error> {
             .or(release.tag_prefix)
             .unwrap_or_else(|| "v".into()),
         token_env: gitea.token_env.unwrap_or_else(|| "GITEA_TOKEN".into()),
+        release_endpoints,
         package_format: overrides.package_format.unwrap_or(package_format),
         repository_fallbacks,
     };
@@ -561,5 +661,47 @@ mod tests {
         ] {
             assert!(parse(source, Overrides::default()).is_err(), "{source}");
         }
+    }
+
+    #[test]
+    fn release_endpoints_are_typed_and_later_layers_replace_the_list() {
+        let config = parse_sources(
+            vec![
+                (
+                    "user".into(),
+                    "[[release.endpoints]]\nname='old'\nprovider='gitea'\nrepository='https://git.example/team/demo'\n"
+                        .into(),
+                ),
+                (
+                    "project".into(),
+                    "[[release.endpoints]]\nname='github'\nprovider='github'\nrepository='https://github.com/team/demo.git'\ntoken-env='DEMO_GITHUB_TOKEN'\n[[release.endpoints]]\nname='mirror'\nprovider='gitea'\nrepository='https://git.example/team/demo'\ntoken-env='DEMO_GITEA_TOKEN'\n"
+                        .into(),
+                ),
+            ],
+            Overrides::default(),
+        )
+        .unwrap();
+        assert_eq!(config.release_endpoints.len(), 2);
+        assert_eq!(config.release_endpoints[0].name, "github");
+        assert_eq!(
+            config.release_endpoints[0].provider,
+            ReleaseProvider::Github
+        );
+        assert_eq!(
+            config.release_endpoints[0].repository,
+            "https://github.com/team/demo"
+        );
+        assert_eq!(config.release_endpoints[1].provider, ReleaseProvider::Gitea);
+
+        assert!(parse(
+            "[[release.endpoints]]\nname='bad name'\nprovider='gitea'\nrepository='https://git.example/team/demo'",
+            Overrides::default()
+        )
+        .is_err());
+        assert!(parse(
+            "[[release.endpoints]]\nname='enterprise'\nprovider='github'\nrepository='https://github.example/team/demo'",
+            Overrides::default()
+        )
+        .is_err());
     }
 }

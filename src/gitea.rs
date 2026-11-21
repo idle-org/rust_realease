@@ -9,7 +9,10 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{env, fs::File, path::Path, time::Duration};
+use std::{fs::File, path::Path, time::Duration};
+
+#[cfg(test)]
+use std::env;
 
 #[derive(Debug, Deserialize)]
 pub struct RemoteRelease {
@@ -30,6 +33,7 @@ pub struct Gitea {
 }
 
 impl Gitea {
+    #[cfg(test)]
     pub fn new(repository: &str, token_env: &str) -> Result<Self, Error> {
         if !repository.starts_with("https://") {
             return Err(Error(

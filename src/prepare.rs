@@ -481,6 +481,7 @@ mod tests {
             locked: true,
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
+            release_endpoints: Vec::new(),
             package_format: crate::config::PackageFormat::Tgz,
             repository_fallbacks: Vec::new(),
         };
@@ -545,6 +546,7 @@ mod tests {
             locked: true,
             tag_prefix: "v".into(),
             token_env: "GITEA_TOKEN".into(),
+            release_endpoints: Vec::new(),
             package_format: crate::config::PackageFormat::Tgz,
             repository_fallbacks: Vec::new(),
         };

@@ -6,8 +6,9 @@ use crate::{
     runner::Runner,
 };
 use flate2::read::GzDecoder;
-use reqwest::blocking::Client;
+use reqwest::{blocking::Client, header::ACCEPT};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Read, Write},
     path::Path,
@@ -237,6 +238,17 @@ pub fn verify_published(
     sums: &Path,
     authenticated_client: Option<&Client>,
 ) -> Result<(), Error> {
+    verify_published_with_asset_urls(repository, tag, artifacts, sums, authenticated_client, None)
+}
+
+pub fn verify_published_with_asset_urls(
+    repository: &str,
+    tag: &str,
+    artifacts: &[Artifact],
+    sums: &Path,
+    authenticated_client: Option<&Client>,
+    asset_urls: Option<&BTreeMap<String, String>>,
+) -> Result<(), Error> {
     let downloads = tempfile::Builder::new()
         .prefix("rust-realease-download-")
         .tempdir()
@@ -258,8 +270,19 @@ pub fn verify_published(
             .file_name()
             .and_then(|s| s.to_str())
             .ok_or_else(|| Error("Invalid asset filename.".into()))?;
-        let mut response = client
-            .get(asset_url(repository, tag, filename))
+        let url = match asset_urls {
+            Some(urls) => urls.get(filename).cloned().ok_or_else(|| {
+                Error(format!(
+                    "{filename}: release API did not return the uploaded asset."
+                ))
+            })?,
+            None => asset_url(repository, tag, filename),
+        };
+        let mut request = client.get(url);
+        if asset_urls.is_some() {
+            request = request.header(ACCEPT, "application/octet-stream");
+        }
+        let mut response = request
             .send()
             .map_err(|_| Error(format!("{filename}: release download failed.")))?;
         if response.status() != reqwest::StatusCode::OK {

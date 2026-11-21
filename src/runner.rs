@@ -3,18 +3,31 @@ use regex::Regex;
 use std::{path::Path, process::Command, sync::OnceLock};
 
 pub struct Runner {
-    token_env: String,
+    token_envs: Vec<String>,
     secrets: Vec<String>,
     verbose: bool,
 }
 
 impl Runner {
     pub fn new(token_env: &str) -> Self {
+        let mut token_envs = vec!["GITEA_TOKEN".to_owned(), "GITHUB_TOKEN".to_owned()];
+        if !token_envs.iter().any(|name| name == token_env) {
+            token_envs.push(token_env.to_owned());
+        }
         Self {
-            token_env: token_env.to_owned(),
+            token_envs,
             secrets: Vec::new(),
             verbose: false,
         }
+    }
+
+    pub fn with_token_envs(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        for name in names {
+            if !self.token_envs.contains(&name) {
+                self.token_envs.push(name);
+            }
+        }
+        self
     }
 
     pub fn with_secret(mut self, secret: Option<&str>) -> Self {
@@ -50,11 +63,10 @@ impl Runner {
             eprintln!("$ {}", self.redact(&command));
         }
         let mut process = Command::new(program);
-        process
-            .args(args)
-            .current_dir(cwd)
-            .env_remove("GITEA_TOKEN")
-            .env_remove(&self.token_env);
+        process.args(args).current_dir(cwd);
+        for name in &self.token_envs {
+            process.env_remove(name);
+        }
         for name in removals {
             process.env_remove(name);
         }
@@ -116,10 +128,11 @@ impl Runner {
         command
             .args(&args[1..])
             .current_dir(cwd)
-            .env_remove("GITEA_TOKEN")
-            .env_remove(&self.token_env)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for name in &self.token_envs {
+            command.env_remove(name);
+        }
         for (name, _) in std::env::vars_os() {
             let upper = name.to_string_lossy().to_uppercase();
             if ["TOKEN", "PASSWORD", "SECRET", "CREDENTIAL"]
@@ -218,7 +231,7 @@ impl Runner {
         for secret in &self.secrets {
             without_token = without_token.replace(secret, "[REDACTED]");
         }
-        for name in ["GITEA_TOKEN", self.token_env.as_str()] {
+        for name in &self.token_envs {
             if let Ok(secret) = std::env::var(name) {
                 if !secret.is_empty() {
                     without_token = without_token.replace(&secret, "[REDACTED]");

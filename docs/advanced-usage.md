@@ -42,6 +42,18 @@ Missing automatically discovered files are ignored. A path explicitly passed wit
 [release]
 tag-prefix = "v"
 
+[[release.endpoints]]
+name = "github"
+provider = "github"
+repository = "https://github.com/example/my-tool"
+token-env = "MY_TOOL_GITHUB_TOKEN"
+
+[[release.endpoints]]
+name = "gitea-mirror"
+provider = "gitea"
+repository = "https://git.example.com/example/my-tool"
+token-env = "MY_TOOL_GITEA_TOKEN"
+
 [build]
 targets = [
     "x86_64-unknown-linux-musl",
@@ -60,6 +72,21 @@ fallbacks = []
 [gitea]
 token-env = "GITEA_TOKEN"
 ```
+
+`release.endpoints` is optional. When omitted, the release repository is taken
+from `--repository-url`, Cargo metadata, or Git origin as before. A
+`github.com` repository automatically selects GitHub and uses `GITHUB_TOKEN`;
+other hosts select Gitea and use `[gitea].token-env`. When endpoints are
+configured, the first is the primary repository used for Cargo release
+metadata and cargo-binstall verification. A later configuration layer replaces
+the complete endpoint list, while repository fallback lists continue to merge.
+Endpoint names must be unique and are also the stable keys used by JSON token
+files. GitHub endpoints currently target github.com; self-hosted GitHub
+Enterprise API layouts are not inferred.
+
+`--repository-url` remains the single-destination override and cannot be mixed
+with configured endpoints. Put that repository in `release.endpoints` when it
+must participate in a multi-destination release.
 
 Use `--tag-prefix ""` for an unprefixed tag such as `0.3.1`. `--tag TAG` must match the selected package version and configured prefix. `--unlocked` permits builds without the usual locked dependency resolution; the default uses `--locked`.
 
@@ -167,7 +194,7 @@ For repositories whose build scripts need a selected Rust toolchain inside Cross
 
 `--compile-only` runs through the package stage and then stops: it performs host checks, cross-compiles, and writes local artifacts without requiring a Gitea token or creating or uploading a release. It is the explicit artifact-build mode and conflicts with `--dry-run`, `--prepare-repo`, and `--stop-after`. A later publication from the same clean commit reuses the completed build when its fingerprint still matches.
 
-`--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. A successful Cross build from a clean checkout records its Git commit, package, targets, profile, lock mode, container engine, active Rust toolchain, and binary list. A later run with the same inputs reuses those regular binary files from Cargo's target directory; dirty checkouts, changed inputs, missing files, and invalid cache records build in a fresh target directory instead. `--recompile` explicitly bypasses a matching completed build. `release` creates or reuses the Gitea release; `upload` uploads archives and checksums. The final stage downloads assets anonymously for public repositories or with Gitea authentication for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for public targets. `--skip-binstall-test` skips that install check, while retaining download verification.
+`--stop-after` can stop at `inspect`, `metadata`, `verify`, `build`, `package`, `release`, `upload`, or `binstall`. `verify` runs host `cargo check` and `cargo test`; `--skip-tests` skips only tests. A successful Cross build from a clean checkout records its Git commit, package, targets, profile, lock mode, container engine, active Rust toolchain, and binary list. A later run with the same inputs reuses those regular binary files from Cargo's target directory; dirty checkouts, changed inputs, missing files, and invalid cache records build in a fresh target directory instead. `--recompile` explicitly bypasses a matching completed build. `release` creates or reuses every configured release; `upload` uploads archives and checksums to each one. The final stage downloads assets anonymously for public repositories or with authenticated Gitea/GitHub API access for private repositories, checks their checksums and archive layout, and runs isolated `cargo-binstall` installs for a public primary endpoint. `--skip-binstall-test` skips that install check, while retaining download verification.
 
 `--draft --stop-after upload` is useful when a release must stay private for review. Private repositories require `--skip-binstall-test`; cargo-binstall cannot fetch their attachment URLs, even when Gitea authentication is configured. `--prerelease` and `--draft` set properties when a release is created; reusing a release preserves its existing settings. `-m/--message TEXT` sets release notes, while `--message-file PATH` reads them from a UTF-8 file; they are mutually exclusive. Notes are included when creating a release and replace the body of an existing tagged release when explicitly supplied. Releases with macOS artifacts automatically append an artifact-specific quarantine-removal section unless the notes already contain a `## macOS Workaround` heading. Asset replacement is not transactional: if an upload fails after a matching asset is deleted, retry the publication explicitly.
 
@@ -186,7 +213,42 @@ Windows archive members have an `.exe` suffix. Raw assets are target-qualified t
 
 ## Authentication and security
 
-Authenticated Gitea API publication requires HTTPS. Pass `--token-file PATH` to read one token from a UTF-8 file; trailing line endings are ignored, while empty and multiline files are rejected. The file takes precedence over the configured environment variable. Without that option, the token comes from `gitea.token-env`, which defaults to `GITEA_TOKEN`. Tokens are never accepted as a positional argument or URL. Child Cargo and Cross processes do not receive them. An HTTPS preparation push to the matching release repository can use the token through a temporary askpass helper; SSH pushes use normal Git credentials. Grant the token account code read and release write access, plus code write when using `--push-preparation`.
+Authenticated Gitea and GitHub API publication requires HTTPS. Pass
+`--token-file PATH` to read one token from a UTF-8 file; trailing line endings
+are ignored, while empty and multiline plaintext files are rejected. A
+plaintext file is valid only when publishing to one endpoint. For several
+endpoints, use a JSON object keyed by the configured endpoint names:
+
+```json
+{
+  "github": "github-token",
+  "gitea-mirror": "gitea-token"
+}
+```
+
+Every configured endpoint must have a token and unknown JSON keys are rejected,
+which catches misspelled endpoint names. Alternatively, omit `--token-file` and
+set each endpoint's `token-env`; this is the supported way to use several
+environment tokens. The legacy Gitea default is `GITEA_TOKEN`, while GitHub
+defaults to `GITHUB_TOKEN`. Tokens are never accepted as a positional argument
+or URL. Child Cargo and Cross processes do not receive them. An HTTPS
+preparation push uses the primary endpoint token supplied by the token file
+through a temporary askpass helper; SSH pushes use normal Git credentials.
+Grant each token repository read and release write access, plus code write when
+using `--push-preparation`.
+
+Before building, every endpoint is authenticated and its repository visibility
+is checked. Release creation, asset upload, and downloaded checksum/archive
+verification then run for every endpoint in configuration order. A failure can
+therefore leave earlier endpoints updated; rerunning is safe when assets do not
+collide, or use `--replace-assets` when replacement is intended. Drafts must be
+published on every endpoint before final public verification.
+
+Private Gitea repositories retain authenticated download verification. GitHub
+assets are verified through their asset-ID API URLs with redirect handling, as
+required for authenticated private downloads. Private primary repositories
+still require `--skip-binstall-test`, because cargo-binstall does not receive
+these release credentials.
 
 Normal publication does not create a commit, tag, or push. Existing asset names cause an error unless `--replace-assets` is set; unrelated assets are not deleted. Private assets are verified with authenticated downloads and do not establish public installability.
 

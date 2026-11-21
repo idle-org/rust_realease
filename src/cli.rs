@@ -1043,4 +1043,95 @@ mod tests {
             Some(Path::new("secrets/gitea-token"))
         );
     }
+
+    fn endpoint(name: &str, token_env: &str) -> ReleaseEndpoint {
+        ReleaseEndpoint {
+            name: name.into(),
+            provider: crate::config::ReleaseProvider::Gitea,
+            repository: "https://example.com/team/demo".into(),
+            token_env: token_env.into(),
+        }
+    }
+
+    #[test]
+    fn endpoint_tokens_are_selected_and_validated() {
+        let primary = endpoint("primary", "RUST_RELEASE_TEST_PRIMARY_TOKEN");
+        let mirror = endpoint("mirror", "RUST_RELEASE_TEST_MIRROR_TOKEN");
+        let plain = TokenFile::Plain("plain-secret".into());
+        assert_eq!(
+            token_for_endpoint(Some(&plain), &primary, 1).unwrap(),
+            "plain-secret"
+        );
+        assert!(token_for_endpoint(Some(&plain), &primary, 2).is_err());
+
+        let named = TokenFile::Named(BTreeMap::from([
+            ("primary".into(), "one".into()),
+            ("mirror".into(), "two".into()),
+        ]));
+        assert_eq!(token_for_endpoint(Some(&named), &mirror, 2).unwrap(), "two");
+        assert!(token_for_endpoint(Some(&TokenFile::Named(BTreeMap::new())), &primary, 1).is_err());
+        assert!(validate_token_keys(Some(&named), &[primary.clone(), mirror]).is_ok());
+        assert!(validate_token_keys(Some(&named), &[primary]).is_err());
+        assert!(validate_token_keys(None, &[]).is_ok());
+    }
+
+    #[test]
+    fn token_file_rejects_non_files_and_invalid_json_values() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(read_token_file(temp.path()).is_err());
+        let path = temp.path().join("tokens.json");
+        for invalid in [
+            "{",
+            "{}",
+            r#"{"primary":""}"#,
+            "{\"primary\":\"line\\nbreak\"}",
+        ] {
+            fs::write(&path, invalid).unwrap();
+            assert!(read_token_file(&path).is_err(), "accepted {invalid:?}");
+        }
+    }
+
+    #[test]
+    fn macos_workaround_covers_zip_archive_binary_and_shell_escaping() {
+        let bundle = Artifact {
+            target: "x86_64-apple-darwin".into(),
+            path: "dist/demo portable.zip".into(),
+            contents: ArtifactContents::Bundle {
+                root: "demo's bundle".into(),
+                format: Format::Zip,
+                entries: vec![],
+            },
+            sha256: "0".repeat(64),
+        };
+        let archive = Artifact {
+            target: "aarch64-apple-darwin".into(),
+            path: "dist/demo.tgz".into(),
+            contents: ArtifactContents::Archive {
+                root: "demo".into(),
+                binaries: vec!["demo".into()],
+            },
+            sha256: "1".repeat(64),
+        };
+        let binary = Artifact {
+            target: "aarch64-apple-darwin".into(),
+            path: "dist/demo-bin".into(),
+            contents: ArtifactContents::Binary,
+            sha256: "2".repeat(64),
+        };
+        let message = release_message_with_macos_workaround(None, &[bundle])
+            .unwrap()
+            .unwrap();
+        assert!(message.contains("ditto -x -k"));
+        assert!(message.contains("demo'\"'\"'s bundle"));
+
+        let message = release_message_with_macos_workaround(None, &[archive])
+            .unwrap()
+            .unwrap();
+        assert!(message.contains("tar -xzf"));
+
+        let message = release_message_with_macos_workaround(None, &[binary])
+            .unwrap()
+            .unwrap();
+        assert!(message.contains("xattr -d com.apple.quarantine \"$executable\""));
+    }
 }

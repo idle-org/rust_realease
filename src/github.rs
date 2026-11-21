@@ -424,4 +424,210 @@ mod tests {
             assert!(Github::with_token(repository, "token").is_err());
         }
     }
+
+    #[test]
+    fn updates_existing_annotated_release_and_replaces_colliding_asset() {
+        let (host, handle) = server(vec![
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/git/ref/tags/v1.0.0",
+                status: 200,
+                body: r#"{"object":{"type":"tag","sha":"tag-object"}}"#,
+            },
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/git/tags/tag-object",
+                status: 200,
+                body: r#"{"object":{"sha":"abc"}}"#,
+            },
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/releases/tags/v1.0.0",
+                status: 200,
+                body: r#"{"id":7,"draft":false}"#,
+            },
+            Reply {
+                method: "PATCH",
+                path: "/repos/team/demo/releases/7",
+                status: 200,
+                body: "",
+            },
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo",
+                status: 200,
+                body: r#"{"private":true}"#,
+            },
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/releases/7/assets?per_page=100",
+                status: 200,
+                body: r#"[{"id":11,"name":"asset.bin"}]"#,
+            },
+            Reply {
+                method: "DELETE",
+                path: "/repos/team/demo/releases/assets/11",
+                status: 204,
+                body: "",
+            },
+            Reply {
+                method: "POST",
+                path: "/repos/team/demo/releases/7/assets?name=asset.bin",
+                status: 201,
+                body: "{}",
+            },
+        ]);
+        let api = Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+            .unwrap();
+        let release = api
+            .ensure_release("v1.0.0", "abc", false, false, Some("new notes"), true)
+            .unwrap();
+        assert_eq!(release.id, 7);
+        assert!(api.repository_private().unwrap());
+        let _ = api.download_client();
+
+        let temp = tempfile::tempdir().unwrap();
+        let asset = temp.path().join("asset.bin");
+        std::fs::write(&asset, b"replacement").unwrap();
+        api.upload(release.id, &[asset.as_path()], true).unwrap();
+
+        let bodies = handle.join().unwrap();
+        assert!(String::from_utf8_lossy(&bodies[3]).contains("new notes"));
+        assert_eq!(bodies[7], b"replacement");
+    }
+
+    #[test]
+    fn reports_missing_mismatched_and_malformed_github_responses() {
+        let cases = [
+            (404, "{}", "missing"),
+            (
+                200,
+                r#"{"object":{"type":"commit","sha":"other"}}"#,
+                "differs",
+            ),
+            (200, "not json", "invalid JSON"),
+            (500, "{}", "HTTP 500"),
+        ];
+        for (status, body, expected) in cases {
+            let (host, handle) = server(vec![Reply {
+                method: "GET",
+                path: "/repos/team/demo/git/ref/tags/v1.0.0",
+                status,
+                body,
+            }]);
+            let api =
+                Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+                    .unwrap();
+            let error = api
+                .ensure_release("v1.0.0", "abc", false, false, None, false)
+                .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn reports_malformed_release_repository_and_asset_responses() {
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/repos/team/demo/git/ref/tags/v1.0.0",
+            status: 200,
+            body: r#"{"object":{"type":"tag"}}"#,
+        }]);
+        let api = Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+            .unwrap();
+        assert!(api
+            .ensure_release("v1.0.0", "abc", false, false, None, false)
+            .unwrap_err()
+            .to_string()
+            .contains("object SHA"));
+        handle.join().unwrap();
+
+        let (host, handle) = server(vec![
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/git/ref/tags/v1.0.0",
+                status: 200,
+                body: r#"{"object":{"type":"commit","sha":"abc"}}"#,
+            },
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/releases/tags/v1.0.0",
+                status: 200,
+                body: "{}",
+            },
+        ]);
+        let api = Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+            .unwrap();
+        assert!(api
+            .ensure_release("v1.0.0", "abc", false, false, None, false)
+            .unwrap_err()
+            .to_string()
+            .contains("missing id"));
+        handle.join().unwrap();
+
+        for (path, operation, expected) in [
+            ("/repos/team/demo", "repository", "visibility"),
+            (
+                "/repos/team/demo/releases/7/assets?per_page=100",
+                "assets",
+                "invalid",
+            ),
+        ] {
+            let (host, handle) = server(vec![Reply {
+                method: "GET",
+                path,
+                status: 200,
+                body: "{}",
+            }]);
+            let api =
+                Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+                    .unwrap();
+            let error = if operation == "repository" {
+                api.repository_private().unwrap_err()
+            } else {
+                api.asset_urls(7).unwrap_err()
+            };
+            assert!(error.to_string().contains(expected), "{error}");
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn refuses_asset_collision_and_reports_upload_http_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let asset = temp.path().join("asset.bin");
+        std::fs::write(&asset, b"asset").unwrap();
+
+        let (host, handle) = server(vec![Reply {
+            method: "GET",
+            path: "/repos/team/demo/releases/7/assets?per_page=100",
+            status: 200,
+            body: r#"[{"id":11,"name":"asset.bin"}]"#,
+        }]);
+        let api = Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+            .unwrap();
+        assert!(api.upload(7, &[asset.as_path()], false).is_err());
+        handle.join().unwrap();
+
+        let (host, handle) = server(vec![
+            Reply {
+                method: "GET",
+                path: "/repos/team/demo/releases/7/assets?per_page=100",
+                status: 200,
+                body: "[]",
+            },
+            Reply {
+                method: "POST",
+                path: "/repos/team/demo/releases/7/assets?name=asset.bin",
+                status: 500,
+                body: "{}",
+            },
+        ]);
+        let api = Github::with_origins("https://github.com/team/demo", "test-token", &host, &host)
+            .unwrap();
+        let error = api.upload(7, &[asset.as_path()], false).unwrap_err();
+        assert!(error.to_string().contains("HTTP 500"), "{error}");
+        handle.join().unwrap();
+    }
 }

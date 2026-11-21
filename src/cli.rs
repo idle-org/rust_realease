@@ -533,7 +533,7 @@ pub fn run(mut args: Cli) -> Result<(), Error> {
     }
     for (endpoint, api, private, release) in &releases {
         let asset_urls = api.asset_urls(release.id)?;
-        let authenticated = if *private {
+        let authenticated = if *private || asset_urls.is_some() {
             Some(api.download_client())
         } else {
             None

@@ -907,6 +907,31 @@ mod tests {
     }
 
     #[test]
+    fn preparation_options_are_rejected_before_project_acquisition() {
+        let error = run(Cli::parse_from([
+            "rust_realease",
+            "missing-project",
+            "--commit-preparation",
+        ]))
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Preparation options require --prepare-repo"));
+
+        let error = run(Cli::parse_from([
+            "rust_realease",
+            "missing-project",
+            "--prepare-repo",
+            "--stop-after",
+            "metadata",
+        ]))
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("--prepare-repo is a separate mode"));
+    }
+
+    #[test]
     fn release_message_inputs_and_recompile_flag_parse() {
         let args = Cli::try_parse_from([
             "rust_realease",
